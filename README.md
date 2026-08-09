@@ -1,4 +1,4 @@
-# Gallery
+# Photo Gallery
 
 A self-hosted photo gallery for a folder of photos on your own machine. No cloud, no external
 services, no database server — just Node, SQLite and a folder of pictures.
@@ -7,6 +7,8 @@ services, no database server — just Node, SQLite and a folder of pictures.
   date the photo was taken. Day separators, a year scrubber down the side, and a full-screen viewer
   with zoom.
 - **Files** — the raw folder tree, browsable to any depth, with single-file and ZIP downloads.
+- **Sharing** — hand someone an access code and they get the gallery for the folders you picked,
+  and nothing else.
 
 Built to stay fluid at tens of thousands of photos.
 
@@ -19,8 +21,16 @@ npm run build
 npm start
 ```
 
-Open <http://localhost:4000>. The first scan starts automatically; photos appear as they are
-indexed, so you do not have to wait for it to finish.
+On the first run the server prints an admin access code to the console. Open
+<http://localhost:4000>, sign in with it, and the first scan starts automatically; photos appear as
+they are indexed, so you do not have to wait for it to finish.
+
+The code is stored only as a hash and cannot be shown again. If you lose it, restart once with
+`GALLERY_ADMIN_CODE` set to whatever you want it to be:
+
+```bash
+GALLERY_ADMIN_CODE=my-new-code npm start
+```
 
 ### Configuration
 
@@ -32,11 +42,12 @@ indexed, so you do not have to wait for it to finish.
 | `port` | HTTP port. | `4000` |
 | `host` | Bind address. `0.0.0.0` exposes it to your LAN. | `0.0.0.0` |
 | `dataDir` | Where the index and thumbnail cache live. | `./data` |
+| `trustProxy` | Honour `X-Forwarded-*`. Turn this on behind a tunnel or reverse proxy. | `false` |
 
-Any of these can be overridden by the `PHOTOS_ROOT`, `PORT`, `HOST` and `DATA_DIR` environment
-variables, which is handy when running as a service. Everything else — which folders feed the
-gallery, how often it re-indexes, row height — is configured in the app's Settings page and stored
-server-side, so it follows you between browsers.
+Any of these can be overridden by the `PHOTOS_ROOT`, `PORT`, `HOST`, `DATA_DIR` and `TRUST_PROXY`
+environment variables, which is handy when running as a service. Everything else — which folders
+feed the gallery, who can see it, how often it re-indexes, row height — is configured in the app's
+Settings page and stored server-side, so it follows you between browsers.
 
 ### Development
 
@@ -44,6 +55,42 @@ server-side, so it follows you between browsers.
 npm run dev        # API on :4000, Vite dev server on :5173 with hot reload
 npm run typecheck
 ```
+
+## Access control
+
+There are two roles. An **admin** sees everything and configures the server. A **viewer** gets the
+gallery for an explicit list of folders — no Files tab, no settings, and no way to address a photo
+outside those folders. Add people under **Settings → People**: pick their folders, and you get a
+code to send them.
+
+**There is no username.** The access code is the identity as well as the proof of it, so sharing the
+gallery means sending one string. That costs exactly log₂(number of users) bits of brute-force
+resistance compared with a username and password — about two bits for a handful of people — which is
+why codes are *generated*, never chosen: 16 characters from a 30-symbol alphabet, ~78 bits. A
+user-chosen password would make this scheme genuinely weak. A generated one makes the missing
+username irrelevant, since a username is not a secret anyway.
+
+The trade it does make is that signing in has to try every user's hash, there being no username to
+index by. That is fine for the handful of people a self-hosted gallery is shared with, and the login
+route is rate-limited to ten attempts per quarter hour so it cannot be used to burn CPU either.
+
+Codes are stored as scrypt digests and are shown exactly once, when created. Issuing a new one for
+someone signs them out everywhere immediately, so a leaked code is a one-click fix.
+
+### Exposing it to the internet
+
+**Use HTTPS.** Everything above assumes the code is not readable in transit; over plain HTTP it is
+sent in the clear on every sign-in. A tunnel — Cloudflare Tunnel, Tailscale — gets you TLS without
+opening a port on your router. Set `trustProxy` to `true` when you do, so the rate limiter sees real
+client addresses and session cookies get marked `Secure`.
+
+Sessions are opaque 256-bit ids in an `HttpOnly`, `SameSite=Lax` cookie, held server-side in SQLite,
+valid for 30 days and renewed as you browse. Deleting a user drops their sessions with them.
+
+Photos are addressable by sequential id, so filtering the feed alone would leave the rest of the
+library readable by anyone who counted upwards. Every id-addressed route — photo details,
+thumbnails, originals — re-checks the photo's folder against the caller's scope and answers `404`,
+not `403`, for anything outside it: whether that id exists is itself not their business.
 
 ## Keyboard shortcuts
 
@@ -89,7 +136,8 @@ mounted.
 **Thumbnails.** Generated with libvips the first time a photo is seen and cached on disk as WebP
 (`data/thumbs/`), keyed by a hash of the file's path, size and modification time. Because the key
 covers the file's contents, thumbnails are served `immutable` and an edited photo automatically gets
-a fresh URL. Three sizes exist: 320 px for the grid, 640 px for HiDPI screens, and 1600 px for the
+a fresh URL. They are also `private` rather than `public`, since which photos you may fetch now
+depends on who you are. Three sizes exist: 320 px for the grid, 640 px for HiDPI screens, and 1600 px for the
 viewer. The full-resolution original is only fetched when you actually zoom in past the fit.
 
 No Redis or other cache server is needed — SQLite holds the metadata and the filesystem holds the
@@ -97,7 +145,10 @@ thumbnail bytes.
 
 **Path safety.** Every path the client can supply is rejected if it is absolute or contains a `..`
 segment, resolved against the root, and then re-checked *after* resolving symlinks, so nothing
-outside `photosRoot` can be read.
+outside `photosRoot` can be read. That guard confines requests to the library as a whole, which is
+exactly the boundary a per-viewer folder assignment subdivides — so the path-addressed endpoints
+(browse, download, ZIP, folder tree) are admin-only, and viewers reach the library only through
+id-addressed routes that check their scope.
 
 ## Supported formats
 
@@ -109,8 +160,11 @@ build cannot decode them.
 
 ```
 server/   Fastify API, SQLite index, scanner, thumbnailer
+  auth.ts   Access codes, users, sessions
+  guard.ts  Authentication hook and the admin check
+  scope.ts  Folder scoping — who may see which photos
 web/      React + Vite front end
-data/     Generated: the SQLite index and the thumbnail cache
+data/     Generated: the SQLite index, sessions and the thumbnail cache
 ```
 
 In production the server also serves the built front end, so the whole thing is one process.

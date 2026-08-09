@@ -1,9 +1,10 @@
 import { createHash } from 'node:crypto';
 import type { FastifyInstance } from 'fastify';
-import { getDb, getSettings } from '../db.js';
+import { getDb } from '../db.js';
+import { currentUser } from '../guard.js';
 import { getDataVersion } from '../indexer.js';
-import { toRelPosix } from '../paths.js';
-import type { PhotoDetail } from '../types.js';
+import { accessScope, folderFilter, galleryScope, photoAllowed } from '../scope.js';
+import type { PhotoDetail, User } from '../types.js';
 
 /** Bytes per manifest record: id u32 | takenAt(sec) u32 | w u16 | h u16. */
 export const MANIFEST_RECORD_BYTES = 12;
@@ -15,41 +16,13 @@ interface ManifestRow {
   height: number | null;
 }
 
-/**
- * Builds the SQL fragment restricting photos to the folders selected in
- * settings.
- *
- * An empty selection shows *nothing*: the gallery is an explicit choice of
- * folders, so an empty choice is an empty gallery rather than a silent
- * "everything". Selecting the root entry ('') is how you ask for the lot.
- */
-function folderFilter(folders: string[]): { sql: string; params: string[] } {
-  const cleaned = folders.map(toRelPosix).filter((f, i, arr) => arr.indexOf(f) === i);
-  if (cleaned.length === 0) return { sql: ' WHERE 0', params: [] };
-  if (cleaned.includes('')) return { sql: '', params: [] };
-
-  const clauses: string[] = [];
-  const params: string[] = [];
-  for (const folder of cleaned) {
-    // The folder itself, plus everything beneath it.
-    clauses.push('(dir = ? OR dir LIKE ? ESCAPE \'\\\')');
-    params.push(folder, `${escapeLike(folder)}/%`);
-  }
-  return { sql: ` WHERE ${clauses.join(' OR ')}`, params };
-}
-
-function escapeLike(value: string): string {
-  return value.replace(/[\\%_]/g, (ch) => `\\${ch}`);
-}
-
 function clampU16(value: number | null): number {
   if (value === null || !Number.isFinite(value) || value <= 0) return 0;
   return Math.min(65535, Math.round(value));
 }
 
-export function buildManifest(): { buffer: Buffer; count: number } {
-  const settings = getSettings();
-  const { sql, params } = folderFilter(settings.galleryFolders);
+export function buildManifest(user: User): { buffer: Buffer; count: number } {
+  const { sql, params } = folderFilter(galleryScope(user));
 
   const rows = getDb()
     .prepare(
@@ -72,10 +45,16 @@ export function buildManifest(): { buffer: Buffer; count: number } {
   return { buffer, count: rows.length };
 }
 
-function manifestEtag(count: number): string {
-  const settings = getSettings();
+/**
+ * The user's folder set is part of the key, so two people signed in to the same
+ * browser — or sharing any cache in front of the server — can never be served
+ * each other's feed on a stale validator.
+ */
+function manifestEtag(user: User, count: number): string {
   const hash = createHash('sha1')
-    .update(`${getDataVersion()}|${count}|${settings.galleryFolders.slice().sort().join(',')}`)
+    .update(
+      `${getDataVersion()}|${user.id}|${count}|${galleryScope(user).slice().sort().join(',')}`,
+    )
     .digest('base64url');
   return `"${hash}"`;
 }
@@ -87,8 +66,9 @@ export async function galleryRoutes(app: FastifyInstance): Promise<void> {
    * what lets the client compute an exact scroll height and jump anywhere.
    */
   app.get('/api/gallery/manifest', async (req, reply) => {
-    const { buffer, count } = buildManifest();
-    const etag = manifestEtag(count);
+    const user = currentUser(req);
+    const { buffer, count } = buildManifest(user);
+    const etag = manifestEtag(user, count);
 
     if (req.headers['if-none-match'] === etag) {
       return reply.code(304).send();
@@ -96,7 +76,7 @@ export async function galleryRoutes(app: FastifyInstance): Promise<void> {
 
     return reply
       .header('Content-Type', 'application/octet-stream')
-      .header('Cache-Control', 'no-cache')
+      .header('Cache-Control', 'private, no-cache')
       .header('ETag', etag)
       .header('X-Photo-Count', String(count))
       .send(buffer);
@@ -105,6 +85,13 @@ export async function galleryRoutes(app: FastifyInstance): Promise<void> {
   app.get<{ Params: { id: string } }>('/api/photos/:id', async (req, reply) => {
     const id = Number(req.params.id);
     if (!Number.isInteger(id)) return reply.code(400).send({ error: 'Invalid id' });
+
+    // Ids are sequential, so without this a restricted viewer could read the
+    // path and EXIF of every photo in the library just by counting upwards.
+    // 404 rather than 403: whether the id exists is itself not their business.
+    if (!photoAllowed(accessScope(currentUser(req)), id)) {
+      return reply.code(404).send({ error: 'Not found' });
+    }
 
     const row = getDb()
       .prepare(
@@ -157,6 +144,6 @@ export async function galleryRoutes(app: FastifyInstance): Promise<void> {
       gps: r.gps_lat !== null && r.gps_lon !== null ? { lat: r.gps_lat, lon: r.gps_lon } : null,
     };
 
-    return reply.header('Cache-Control', 'no-cache').send(detail);
+    return reply.header('Cache-Control', 'private, no-cache').send(detail);
   });
 }

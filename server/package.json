@@ -1,5 +1,5 @@
 {
-  "name": "@gallery/server",
+  "name": "@photo-gallery/server",
   "version": "1.0.0",
   "private": true,
   "type": "module",
@@ -12,7 +12,9 @@
   },
   "dependencies": {
     "@fastify/compress": "^8.0.1",
+    "@fastify/cookie": "^11.1.2",
     "@fastify/formbody": "^8.0.2",
+    "@fastify/rate-limit": "^10.3.0",
     "@fastify/static": "^8.0.4",
     "archiver": "^7.0.1",
     "better-sqlite3": "^11.8.1",

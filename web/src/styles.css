@@ -1,5 +1,5 @@
 /* ==========================================================================
-   Gallery — light theme
+   Photo Gallery — light theme
    A committed light design. The lightbox stays near-black on purpose: a bright
    surround shifts your perception of a photo's colour and exposure, which is
    why every serious photo viewer darkens the room rather than the picture.
@@ -1333,6 +1333,227 @@ input[type='checkbox'] {
     padding-left: 12px;
     padding-right: 12px;
   }
+}
+
+/* ------------------------------------------------------------------ auth -- */
+
+.login {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: var(--bg-subtle);
+}
+
+.login-card {
+  width: 100%;
+  max-width: 380px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 30px 30px 26px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+  box-shadow: var(--shadow-md);
+}
+
+.login-brand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 18px;
+  font-size: 17px;
+  font-weight: 650;
+  letter-spacing: -0.02em;
+}
+
+.login-card label {
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.login-input {
+  width: 100%;
+  padding: 11px 13px;
+  font-size: 15px;
+  /* Codes are read off a message and typed in groups; tracking makes a
+     mistyped character obvious before it is submitted. */
+  letter-spacing: 0.09em;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  color: var(--text);
+}
+
+.login-input:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+
+.login-hint {
+  margin: 0;
+  font-size: 12.5px;
+  color: var(--text-faint);
+}
+
+.login-error {
+  margin: 2px 0 0;
+  font-size: 13px;
+  color: var(--danger);
+}
+
+.login-card .btn {
+  margin-top: 14px;
+  justify-content: center;
+  padding: 10px;
+}
+
+.who {
+  font-size: 13px;
+  color: var(--text-dim);
+  margin-right: 2px;
+  max-width: 16ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ----------------------------------------------------------------- users -- */
+
+.user-list {
+  display: flex;
+  flex-direction: column;
+}
+
+.user-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+  padding: 13px 0;
+  border-top: 1px solid var(--border);
+}
+
+.user-row:first-child {
+  border-top: none;
+  padding-top: 2px;
+}
+
+.user-main {
+  flex: 1 1 200px;
+  min-width: 0;
+}
+
+.user-name {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13.5px;
+  font-weight: 600;
+}
+
+.user-meta {
+  font-size: 12.5px;
+  color: var(--text-dim);
+  margin-top: 3px;
+}
+
+.user-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 0 0 auto;
+}
+
+.user-folders {
+  flex: 1 1 100%;
+  max-height: 260px;
+  margin-top: 2px;
+}
+
+.user-draft {
+  margin-top: 16px;
+  padding: 16px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-subtle);
+}
+
+.user-draft .field {
+  padding-top: 0;
+}
+
+.user-draft .folder-tree {
+  background: var(--surface);
+  margin-top: 14px;
+}
+
+.user-draft-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 14px;
+}
+
+.chip {
+  padding: 2px 7px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  color: var(--accent);
+  background: var(--accent-soft);
+  border: 1px solid var(--accent-border);
+}
+
+.chip-quiet {
+  color: var(--text-dim);
+  background: var(--surface-sunken);
+  border-color: var(--border);
+}
+
+.btn-danger-ghost:hover:not(:disabled) {
+  color: var(--danger);
+  background: var(--danger-soft);
+}
+
+.code-reveal {
+  margin-bottom: 18px;
+  padding: 16px 18px;
+  border: 1px solid var(--accent-border);
+  border-radius: var(--radius);
+  background: var(--accent-soft);
+}
+
+.code-reveal-head {
+  font-size: 13px;
+  color: var(--text-dim);
+}
+
+.code-reveal-value {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 8px 0 6px;
+}
+
+.code-reveal-value code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 19px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  user-select: all;
+  word-break: break-all;
+}
+
+.code-reveal-note {
+  font-size: 12.5px;
+  color: var(--text-dim);
+  margin-bottom: 12px;
 }
 
 @media (prefers-reduced-motion: reduce) {

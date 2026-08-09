@@ -93,6 +93,27 @@ function migrate(instance: Database.Database): void {
       key   TEXT PRIMARY KEY,
       value TEXT NOT NULL
     );
+
+    CREATE TABLE IF NOT EXISTS users (
+      id           INTEGER PRIMARY KEY,
+      label        TEXT    NOT NULL,
+      role         TEXT    NOT NULL,
+      -- scrypt digest of the access code. The code itself is never stored.
+      code_hash    TEXT    NOT NULL,
+      -- JSON array of relative folder paths; '' means the whole library.
+      folders      TEXT    NOT NULL DEFAULT '[]',
+      created_at   INTEGER NOT NULL,
+      last_seen_at INTEGER
+    );
+
+    CREATE TABLE IF NOT EXISTS sessions (
+      id         TEXT    PRIMARY KEY,
+      user_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      created_at INTEGER NOT NULL,
+      expires_at INTEGER NOT NULL
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_id);
   `);
 }
 

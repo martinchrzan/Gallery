@@ -5,6 +5,33 @@
 
 export type IndexMode = 'watch' | 'interval' | 'manual';
 
+/**
+ * `admin` sees and configures everything. `viewer` gets the gallery feed for an
+ * explicit list of folders and nothing else — no Files tab, no settings, and no
+ * way to address a photo outside those folders.
+ */
+export type Role = 'admin' | 'viewer';
+
+export interface User {
+  id: number;
+  /** Display name, shown in the admin's user list. Not a login credential. */
+  label: string;
+  role: Role;
+  /**
+   * Folders this viewer may see, same semantics as {@link Settings.galleryFolders}.
+   * Always `['']` for an admin, who is never folder-restricted.
+   */
+  folders: string[];
+  createdAt: number;
+  lastSeenAt: number | null;
+}
+
+/** A newly created or rotated access code. Returned once and never stored in the clear. */
+export interface UserWithCode {
+  user: User;
+  code: string;
+}
+
 export interface Settings {
   /**
    * Relative folder paths (POSIX separators) whose photos appear in the gallery
@@ -99,6 +126,10 @@ export interface IndexStatus {
   total: number;
   lastScanAt: number | null;
   lastError: string | null;
+}
+
+export interface AuthState {
+  user: User;
 }
 
 export interface StatsResult {

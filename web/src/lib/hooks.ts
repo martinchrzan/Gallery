@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import type { IndexStatus } from '@shared';
 
 export interface Size {
@@ -43,11 +43,19 @@ export function useElementSize(element: HTMLElement | null): Size {
 /**
  * Live indexing progress from the server's SSE stream, with automatic
  * reconnection when the server restarts during development.
+ *
+ * The stream is admin-only. `enabled` exists so a viewer does not sit in a
+ * three-second reconnect loop against an endpoint that will always 401.
  */
-export function useIndexStatus(): IndexStatus | null {
+export function useIndexStatus(enabled = true): IndexStatus | null {
   const [status, setStatus] = useState<IndexStatus | null>(null);
 
   useEffect(() => {
+    if (!enabled) {
+      setStatus(null);
+      return;
+    }
+
     let source: EventSource | null = null;
     let retry: number | undefined;
     let closed = false;
@@ -76,7 +84,7 @@ export function useIndexStatus(): IndexStatus | null {
       window.clearTimeout(retry);
       source?.close();
     };
-  }, []);
+  }, [enabled]);
 
   return status;
 }
@@ -89,11 +97,13 @@ export function useToast(): [
   const [toast, setToast] = useState<{ message: string; error: boolean } | null>(null);
   const timer = useRef<number | undefined>(undefined);
 
-  const show = (message: string, error = false): void => {
+  // Stable identity: callers pass this down as a prop, and a fresh function on
+  // every render would invalidate their effect dependencies.
+  const show = useCallback((message: string, error = false): void => {
     window.clearTimeout(timer.current);
     setToast({ message, error });
     timer.current = window.setTimeout(() => setToast(null), error ? 6000 : 2800);
-  };
+  }, []);
 
   useEffect(() => () => window.clearTimeout(timer.current), []);
 

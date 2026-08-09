@@ -3,7 +3,9 @@ import fsp from 'node:fs/promises';
 import path from 'node:path';
 import type { FastifyInstance, FastifyReply } from 'fastify';
 import { getDb } from '../db.js';
+import { currentUser } from '../guard.js';
 import { absFromRel, realpathWithin } from '../paths.js';
+import { accessScope, dirAllowed } from '../scope.js';
 import { getThumb, isThumbSize } from '../thumbs.js';
 
 const MIME_BY_EXT: Record<string, string> = {
@@ -26,6 +28,7 @@ export function mimeFor(name: string): string {
 
 interface MediaRow {
   rel_path: string;
+  dir: string;
   name: string;
   content_key: string;
   size: number;
@@ -33,7 +36,7 @@ interface MediaRow {
 
 function lookup(id: number): MediaRow | undefined {
   return getDb()
-    .prepare('SELECT rel_path, name, content_key, size FROM photos WHERE id = ?')
+    .prepare('SELECT rel_path, dir, name, content_key, size FROM photos WHERE id = ?')
     .get(id) as MediaRow | undefined;
 }
 
@@ -99,7 +102,11 @@ export async function mediaRoutes(app: FastifyInstance): Promise<void> {
       if (!isThumbSize(size)) return reply.code(400).send({ error: 'Unsupported thumbnail size' });
 
       const row = lookup(id);
-      if (!row) return reply.code(404).send({ error: 'Not found' });
+      // Indistinguishable from a genuinely missing photo, so scanning ids tells
+      // a restricted viewer nothing about what exists outside their folders.
+      if (!row || !dirAllowed(accessScope(currentUser(req)), row.dir)) {
+        return reply.code(404).send({ error: 'Not found' });
+      }
 
       const etag = `"${row.content_key}-${size}"`;
       if (req.headers['if-none-match'] === etag) return reply.code(304).send();
@@ -117,7 +124,9 @@ export async function mediaRoutes(app: FastifyInstance): Promise<void> {
       return reply
         .header('Content-Type', 'image/webp')
         .header('Content-Length', String(stat.size))
-        .header('Cache-Control', 'public, max-age=31536000, immutable')
+        // `private`, not `public`: the response now depends on who asked, so a
+        // shared cache in front of the server must never hand it to someone else.
+        .header('Cache-Control', 'private, max-age=31536000, immutable')
         .header('ETag', etag)
         .send(createReadStream(thumbFile));
     },
@@ -131,7 +140,9 @@ export async function mediaRoutes(app: FastifyInstance): Promise<void> {
       if (!Number.isInteger(id)) return reply.code(400).send({ error: 'Invalid id' });
 
       const row = lookup(id);
-      if (!row) return reply.code(404).send({ error: 'Not found' });
+      if (!row || !dirAllowed(accessScope(currentUser(req)), row.dir)) {
+        return reply.code(404).send({ error: 'Not found' });
+      }
 
       let abs: string;
       let stat;
@@ -147,7 +158,7 @@ export async function mediaRoutes(app: FastifyInstance): Promise<void> {
         return reply.code(304).send();
       }
 
-      reply.header('Cache-Control', 'public, max-age=31536000, immutable').header('ETag', etag);
+      reply.header('Cache-Control', 'private, max-age=31536000, immutable').header('ETag', etag);
       if (req.query.download !== undefined) {
         reply.header('Content-Disposition', contentDisposition(row.name));
       }

@@ -1,13 +1,28 @@
 import type {
+  AuthState,
   BrowseResult,
   FolderNode,
   IndexStatus,
   PhotoDetail,
+  Role,
   Settings,
   StatsResult,
+  User,
+  UserWithCode,
 } from '@shared';
 
-export type { BrowseResult, FolderNode, IndexStatus, PhotoDetail, Settings, StatsResult };
+export type {
+  AuthState,
+  BrowseResult,
+  FolderNode,
+  IndexStatus,
+  PhotoDetail,
+  Role,
+  Settings,
+  StatsResult,
+  User,
+  UserWithCode,
+};
 
 /**
  * The gallery feed, decoded from the server's packed binary manifest.
@@ -34,6 +49,17 @@ export const EMPTY_MANIFEST: Manifest = {
   heights: new Uint16Array(0),
 };
 
+/**
+ * Called whenever the server rejects a request for want of a session, so a
+ * cookie that expired mid-browse drops straight back to the login screen
+ * instead of leaving the UI wedged on an error.
+ */
+let onUnauthorized: (() => void) | null = null;
+
+export function setUnauthorizedHandler(handler: (() => void) | null): void {
+  onUnauthorized = handler;
+}
+
 async function jsonRequest<T>(url: string, init?: RequestInit): Promise<T> {
   const res = await fetch(url, {
     ...init,
@@ -42,6 +68,7 @@ async function jsonRequest<T>(url: string, init?: RequestInit): Promise<T> {
       ...init?.headers,
     },
   });
+  if (res.status === 401) onUnauthorized?.();
   if (!res.ok) {
     let message = `${res.status} ${res.statusText}`;
     try {
@@ -57,6 +84,7 @@ async function jsonRequest<T>(url: string, init?: RequestInit): Promise<T> {
 
 export async function fetchManifest(signal?: AbortSignal): Promise<Manifest> {
   const res = await fetch('/api/gallery/manifest', { signal });
+  if (res.status === 401) onUnauthorized?.();
   if (!res.ok) throw new Error(`Could not load the gallery (${res.status})`);
 
   const buffer = await res.arrayBuffer();
@@ -82,7 +110,37 @@ export async function fetchManifest(signal?: AbortSignal): Promise<Manifest> {
   return { count, ids, times, widths, heights };
 }
 
+/**
+ * Probes the current session without tripping {@link setUnauthorizedHandler} —
+ * a 401 here is the expected answer for a signed-out visitor, not an event.
+ */
+export async function probeSession(signal?: AbortSignal): Promise<AuthState | null> {
+  const res = await fetch('/api/auth/me', { signal });
+  if (res.status === 401) return null;
+  if (!res.ok) throw new Error(`Could not reach the server (${res.status})`);
+  return (await res.json()) as AuthState;
+}
+
 export const api = {
+  login: (code: string) =>
+    jsonRequest<AuthState>('/api/auth/login', { method: 'POST', body: JSON.stringify({ code }) }),
+
+  logout: () => jsonRequest<{ ok: boolean }>('/api/auth/logout', { method: 'POST' }),
+
+  users: (signal?: AbortSignal) => jsonRequest<User[]>('/api/users', { signal }),
+
+  createUser: (input: { label: string; folders: string[] }) =>
+    jsonRequest<UserWithCode>('/api/users', { method: 'POST', body: JSON.stringify(input) }),
+
+  updateUser: (id: number, patch: { label?: string; folders?: string[] }) =>
+    jsonRequest<User>(`/api/users/${id}`, { method: 'PATCH', body: JSON.stringify(patch) }),
+
+  rotateUserCode: (id: number) =>
+    jsonRequest<UserWithCode>(`/api/users/${id}/code`, { method: 'POST' }),
+
+  deleteUser: (id: number) =>
+    jsonRequest<{ deleted: boolean }>(`/api/users/${id}`, { method: 'DELETE' }),
+
   photo: (id: number, signal?: AbortSignal) =>
     jsonRequest<PhotoDetail>(`/api/photos/${id}`, { signal }),
 

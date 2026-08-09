@@ -2,5 +2,6 @@
   "photosRoot": "C:/Users/you/Pictures",
   "port": 4000,
   "host": "0.0.0.0",
-  "dataDir": "./data"
+  "dataDir": "./data",
+  "trustProxy": false
 }

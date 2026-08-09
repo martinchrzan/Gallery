@@ -2,24 +2,32 @@ import { useCallback, useEffect, useState } from 'react';
 import { api, type FolderNode, type Settings, type StatsResult } from '../api/client';
 import { formatBytes, formatCount, formatDateTime } from '../lib/format';
 import { useIndexStatus, useToast } from '../lib/hooks';
+import { toggleFolder as toggleFolderSelection } from './folders';
 import { FolderTree } from './FolderTree';
+import { UsersPanel } from './UsersPanel';
 
 const INTERVAL_PRESETS = [1, 2, 6, 12, 24];
 
 interface SettingsViewProps {
   settings: Settings | null;
   onSettingsChange: (settings: Settings) => void;
+  currentUserId: number;
 }
 
 export function SettingsView({
   settings,
   onSettingsChange,
+  currentUserId,
 }: SettingsViewProps): React.ReactElement {
   const [tree, setTree] = useState<FolderNode | null>(null);
   const [stats, setStats] = useState<StatsResult | null>(null);
   const [saving, setSaving] = useState(false);
   const [toast, showToast] = useToast();
   const indexStatus = useIndexStatus();
+
+  // Stable so the users panel does not refetch on every re-render of this view.
+  const reportError = useCallback((message: string) => showToast(message, true), [showToast]);
+  const reportNotice = useCallback((message: string) => showToast(message), [showToast]);
 
   const loadStats = useCallback((signal?: AbortSignal) => {
     api
@@ -76,22 +84,7 @@ export function SettingsView({
   const selectedFolders = new Set(settings.galleryFolders);
 
   const toggleFolder = (path: string): void => {
-    const next = new Set(selectedFolders);
-
-    if (next.has(path)) {
-      next.delete(path);
-    } else {
-      next.add(path);
-      // Drop any descendants — the newly-selected parent already covers them.
-      // Selecting the root ('') therefore collapses to just the root.
-      for (const existing of [...next]) {
-        if (existing !== path && (path === '' || existing.startsWith(`${path}/`))) {
-          next.delete(existing);
-        }
-      }
-    }
-
-    void save({ galleryFolders: [...next] });
+    void save({ galleryFolders: toggleFolderSelection(selectedFolders, path) });
   };
 
   return (
@@ -131,6 +124,13 @@ export function SettingsView({
             )}
           </div>
         </section>
+
+        <UsersPanel
+          tree={tree}
+          currentUserId={currentUserId}
+          onError={reportError}
+          onNotice={reportNotice}
+        />
 
         <section className="card">
           <h2>Indexing</h2>

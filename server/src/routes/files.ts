@@ -4,6 +4,7 @@ import path from 'node:path';
 import archiver from 'archiver';
 import type { FastifyInstance } from 'fastify';
 import { getDb } from '../db.js';
+import { requireAdmin } from '../guard.js';
 import {
   isIgnoredDir,
   isSupportedImage,
@@ -26,6 +27,18 @@ interface IndexedRow {
 const collator = new Intl.Collator(undefined, { numeric: true, sensitivity: 'base' });
 
 export async function filesRoutes(app: FastifyInstance): Promise<void> {
+  /**
+   * Every route here is admin-only, applied once for the whole plugin so a route
+   * added later cannot forget it.
+   *
+   * These endpoints address the library by path rather than by photo id, and
+   * `resolveWithinRoot` confines them to `photosRoot` — which is exactly the
+   * boundary a per-user folder assignment subdivides. Rather than teach each of
+   * browse, download, zip and tree to respect a narrower root, viewers simply do
+   * not get the Files view at all.
+   */
+  app.addHook('preHandler', requireAdmin);
+
   /** One directory level: subfolders plus files, with photo ids where indexed. */
   app.get<{ Querystring: { path?: string } }>('/api/files/browse', async (req, reply) => {
     const { rel, abs } = resolveWithinRoot(req.query.path);

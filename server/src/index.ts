@@ -1,14 +1,19 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import compress from '@fastify/compress';
+import cookie from '@fastify/cookie';
 import formbody from '@fastify/formbody';
+import rateLimit from '@fastify/rate-limit';
 import fastifyStatic from '@fastify/static';
 import Fastify from 'fastify';
+import { ensureAdminUser, pruneSessions } from './auth.js';
 import { config, repoRoot } from './config.js';
 import { getDb } from './db.js';
+import { authGuard } from './guard.js';
 import { startIndexer, stopIndexer } from './indexer.js';
 import { PathError } from './paths.js';
 import { destroyMetadataPool } from './workers/pool.js';
+import { authRoutes } from './routes/auth.js';
 import { filesRoutes } from './routes/files.js';
 import { galleryRoutes } from './routes/gallery.js';
 import { mediaRoutes } from './routes/media.js';
@@ -28,10 +33,18 @@ async function main(): Promise<void> {
     bodyLimit: 2 * 1024 * 1024,
     // Photo libraries on spinning disks or network shares can be slow to stat.
     connectionTimeout: 0,
+    // Behind a tunnel or reverse proxy, the real client IP and scheme only
+    // arrive in X-Forwarded-*; the rate limiter and cookie flags depend on them.
+    trustProxy: cfg.trustProxy,
   });
 
   // The ZIP endpoint accepts a form POST so the browser streams it to disk.
   await app.register(formbody);
+  await app.register(cookie);
+
+  // Off by default so ordinary browsing is never throttled; the login route
+  // opts in, since that is the one endpoint worth guessing at.
+  await app.register(rateLimit, { global: false });
 
   await app.register(compress, {
     global: true,
@@ -52,12 +65,20 @@ async function main(): Promise<void> {
     return reply.code(status).send({ error: status === 500 ? 'Internal error' : error.message });
   });
 
+  // Registered on the root instance so it covers every /api/ route, including
+  // any added later — protection is opt-out, not opt-in.
+  app.decorateRequest('authUser', null);
+  app.addHook('onRequest', authGuard);
+
+  await app.register(authRoutes);
   await app.register(galleryRoutes);
   await app.register(mediaRoutes);
   await app.register(filesRoutes);
   await app.register(settingsRoutes);
 
-  app.get('/api/health', async () => ({ ok: true, photosRoot: cfg.photosRoot }));
+  // Deliberately says nothing about the library: this is the one endpoint a
+  // monitoring check may want without a session, so it must not leak a path.
+  app.get('/api/health', async () => ({ ok: true }));
 
   // In production the built SPA is served from this same process, so the whole
   // gallery is one `npm start`.
@@ -87,6 +108,11 @@ async function main(): Promise<void> {
   }
 
   getDb();
+  pruneSessions();
+  // Runs before the port opens, so the server is never reachable without an
+  // admin account existing to gate it.
+  await ensureAdminUser((msg) => app.log.info(msg));
+
   await app.listen({ port: cfg.port, host: cfg.host });
   app.log.info(`serving photos from ${cfg.photosRoot}`);
 

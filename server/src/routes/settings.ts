@@ -1,10 +1,12 @@
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { getDb, getSettings, saveSettings } from '../db.js';
+import { currentUser, requireAdmin } from '../guard.js';
 import { applyIndexMode, getIndexStatus, indexEvents, scan } from '../indexer.js';
 import { toRelPosix } from '../paths.js';
+import { galleryScope } from '../scope.js';
 import { clearThumbCache, thumbCacheStats } from '../thumbs.js';
-import type { IndexStatus, StatsResult } from '../types.js';
+import { DEFAULT_SETTINGS, type IndexStatus, type Settings, type StatsResult, type User } from '../types.js';
 
 const SettingsPatch = z
   .object({
@@ -17,12 +19,33 @@ const SettingsPatch = z
   })
   .strict();
 
+/**
+ * What a given user is allowed to know about the configuration.
+ *
+ * A viewer's client needs the display preferences and needs `galleryFolders` to
+ * render the "nothing selected" empty state — but the real value would list
+ * folder names from across the library, so they get their own assignment
+ * instead. Indexing settings are operational and are flattened to defaults
+ * rather than reported.
+ */
+function visibleSettings(user: User): Settings {
+  const settings = getSettings();
+  if (user.role === 'admin') return settings;
+
+  return {
+    ...DEFAULT_SETTINGS,
+    galleryFolders: galleryScope(user),
+    rowHeight: settings.rowHeight,
+    showMetadata: settings.showMetadata,
+  };
+}
+
 export async function settingsRoutes(app: FastifyInstance): Promise<void> {
-  app.get('/api/settings', async (_req, reply) =>
-    reply.header('Cache-Control', 'no-store').send(getSettings()),
+  app.get('/api/settings', async (req, reply) =>
+    reply.header('Cache-Control', 'no-store').send(visibleSettings(currentUser(req))),
   );
 
-  app.put('/api/settings', async (req, reply) => {
+  app.put('/api/settings', { preHandler: requireAdmin }, async (req, reply) => {
     const parsed = SettingsPatch.safeParse(req.body);
     if (!parsed.success) {
       return reply.code(400).send({ error: 'Invalid settings', issues: parsed.error.issues });
@@ -47,17 +70,17 @@ export async function settingsRoutes(app: FastifyInstance): Promise<void> {
     return reply.send(after);
   });
 
-  app.get('/api/index/status', async (_req, reply) =>
+  app.get('/api/index/status', { preHandler: requireAdmin }, async (_req, reply) =>
     reply.header('Cache-Control', 'no-store').send(getIndexStatus()),
   );
 
-  app.post('/api/index/rescan', async (_req, reply) => {
+  app.post('/api/index/rescan', { preHandler: requireAdmin }, async (_req, reply) => {
     void scan();
     return reply.send({ started: true });
   });
 
   /** Server-sent events carrying scan progress to the UI's progress pill. */
-  app.get('/api/index/events', (req, reply) => {
+  app.get('/api/index/events', { preHandler: requireAdmin }, (req, reply) => {
     reply.raw.writeHead(200, {
       'Content-Type': 'text/event-stream',
       'Cache-Control': 'no-cache, no-transform',
@@ -82,7 +105,7 @@ export async function settingsRoutes(app: FastifyInstance): Promise<void> {
     });
   });
 
-  app.get('/api/stats', async (_req, reply) => {
+  app.get('/api/stats', { preHandler: requireAdmin }, async (_req, reply) => {
     const row = getDb()
       .prepare(
         `SELECT count(*) AS photos, coalesce(sum(size), 0) AS bytes,
@@ -103,7 +126,7 @@ export async function settingsRoutes(app: FastifyInstance): Promise<void> {
     return reply.header('Cache-Control', 'no-store').send(stats);
   });
 
-  app.post('/api/cache/clear', async (_req, reply) => {
+  app.post('/api/cache/clear', { preHandler: requireAdmin }, async (_req, reply) => {
     await clearThumbCache();
     return reply.send({ cleared: true });
   });

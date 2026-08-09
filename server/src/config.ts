@@ -12,6 +12,7 @@ const ConfigSchema = z.object({
   port: z.number().int().positive().default(4000),
   host: z.string().default('0.0.0.0'),
   dataDir: z.string().default('./data'),
+  trustProxy: z.boolean().default(false),
 });
 
 export interface Config {
@@ -23,6 +24,12 @@ export interface Config {
   dataDir: string;
   thumbDir: string;
   dbPath: string;
+  /**
+   * Honour `X-Forwarded-*` from a reverse proxy or tunnel. Without it the login
+   * rate limiter sees every request as coming from the proxy's own address, and
+   * session cookies are never marked `Secure` because the hop to us is plain HTTP.
+   */
+  trustProxy: boolean;
 }
 
 function readConfigFile(): unknown {
@@ -53,6 +60,7 @@ export function loadConfig(): Config {
     ...(process.env.PORT ? { port: Number(process.env.PORT) } : {}),
     ...(process.env.HOST ? { host: process.env.HOST } : {}),
     ...(process.env.DATA_DIR ? { dataDir: process.env.DATA_DIR } : {}),
+    ...(process.env.TRUST_PROXY ? { trustProxy: process.env.TRUST_PROXY === 'true' } : {}),
   };
 
   const parsed = ConfigSchema.safeParse(merged);
@@ -87,6 +95,7 @@ export function loadConfig(): Config {
     dataDir,
     thumbDir: path.join(dataDir, 'thumbs'),
     dbPath: path.join(dataDir, 'gallery.db'),
+    trustProxy: raw.trustProxy,
   };
 }
 
