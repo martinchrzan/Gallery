@@ -3,6 +3,7 @@ import path from 'node:path';
 import compress from '@fastify/compress';
 import cookie from '@fastify/cookie';
 import formbody from '@fastify/formbody';
+import helmet from '@fastify/helmet';
 import rateLimit from '@fastify/rate-limit';
 import fastifyStatic from '@fastify/static';
 import Fastify from 'fastify';
@@ -36,6 +37,50 @@ async function main(): Promise<void> {
     // Behind a tunnel or reverse proxy, the real client IP and scheme only
     // arrive in X-Forwarded-*; the rate limiter and cookie flags depend on them.
     trustProxy: cfg.trustProxy,
+  });
+
+  // Registered first so the headers are on every response, including the ones
+  // the error handler and the 404 fallback produce.
+  //
+  // The policy is as tight as a same-origin SPA allows: nothing loads from
+  // anywhere but this server. The built bundle carries no inline script or
+  // style — React applies its `style` props through the CSSOM, which CSP does
+  // not police — so neither directive needs `unsafe-inline`, and helmet's
+  // defaults are narrowed accordingly.
+  await app.register(helmet, {
+    contentSecurityPolicy: {
+      directives: {
+        'default-src': ["'self'"],
+        'base-uri': ["'self'"],
+        // Same-origin XHR plus the SSE stream behind /api/index/events.
+        'connect-src': ["'self'"],
+        // Mulish is bundled into /assets, never fetched from a CDN, so the
+        // default's `https:` and `data:` are not needed.
+        'font-src': ["'self'"],
+        // The ZIP download submits a generated form to /api/files/zip.
+        'form-action': ["'self'"],
+        // Nothing here is meant to be framed; this is the clickjacking guard.
+        'frame-ancestors': ["'none'"],
+        // `data:` is the inline SVG favicon in index.html.
+        'img-src': ["'self'", 'data:'],
+        'object-src': ["'none'"],
+        'script-src': ["'self'"],
+        'style-src': ["'self'"],
+        // Dropped on purpose: it rewrites same-origin asset URLs to https and
+        // would break plain-HTTP access over the LAN. The tunnel serves TLS
+        // for the public hostname, and HSTS below covers that side.
+        'upgrade-insecure-requests': null,
+      },
+    },
+    // Scoped to this host alone — a sibling subdomain served over plain HTTP
+    // must not be dragged into HTTPS-only by this app's header.
+    hsts: { maxAge: 31536000, includeSubDomains: false },
+    // The legacy twin of `frame-ancestors 'none'`. Helmet defaults it to
+    // SAMEORIGIN, which would contradict the CSP on browsers old enough to
+    // only understand this header.
+    xFrameOptions: { action: 'deny' },
+    // Photos and thumbnails are private; no other origin should embed them.
+    crossOriginResourcePolicy: { policy: 'same-origin' },
   });
 
   // The ZIP endpoint accepts a form POST so the browser streams it to disk.
@@ -89,9 +134,9 @@ async function main(): Promise<void> {
       index: ['index.html'],
       maxAge: '1h',
       // Vite emits content-hashed asset names, so those can be cached hard.
-      setHeaders: (res, filePath) => {
+      setHeaders: (reply, filePath) => {
         if (filePath.includes(`${path.sep}assets${path.sep}`)) {
-          res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
+          reply.header('Cache-Control', 'public, max-age=31536000, immutable');
         }
       },
     });
