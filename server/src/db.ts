@@ -25,6 +25,8 @@ export interface PhotoRow {
   gps_lon: number | null;
   content_key: string;
   meta_state: number;
+  /** Extraction attempts so far. Lets a file that crashes the extractor be retired. */
+  meta_attempts: number;
   seen_gen: number;
 }
 
@@ -115,6 +117,20 @@ function migrate(instance: Database.Database): void {
 
     CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_id);
   `);
+
+  addColumn(instance, 'photos', 'meta_attempts', 'INTEGER NOT NULL DEFAULT 0');
+}
+
+/** `ALTER TABLE ... ADD COLUMN` is not idempotent in SQLite, so check first. */
+function addColumn(
+  instance: Database.Database,
+  table: string,
+  column: string,
+  definition: string,
+): void {
+  const columns = instance.pragma(`table_info(${table})`) as { name: string }[];
+  if (columns.some((c) => c.name === column)) return;
+  instance.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
 }
 
 /* ------------------------------------------------------------------ meta -- */

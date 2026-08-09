@@ -24,11 +24,17 @@ import {
 } from './paths.js';
 import { deleteThumbs, getThumb, hasThumb } from './thumbs.js';
 import type { IndexStatus } from './types.js';
-import { getMetadataPool } from './workers/pool.js';
+import { destroyMetadataPool, getMetadataPool } from './workers/pool.js';
 import type { MetaJob, MetaResult } from './workers/metadata-worker.js';
 
 const WALK_BATCH = 500;
 const META_BATCH = 32;
+/**
+ * How often one file may be handed to the extractor before it is retired.
+ * A file that kills its worker process never reports a result, so without this
+ * the next scan would pick it up again and die in exactly the same place.
+ */
+const MAX_META_ATTEMPTS = 3;
 
 export const indexEvents = new EventEmitter();
 
@@ -45,6 +51,13 @@ const status: IndexStatus = {
 
 /** Bumped whenever the photo set changes, so manifest ETags invalidate. */
 let dataVersion = Date.now();
+
+/**
+ * Set once shutdown begins. The extraction pass reads it to tell "the worker
+ * died on this file" from "we are tearing the pool down" — without it, every
+ * batch still in the air at exit would look like a bad file and be retired.
+ */
+let stopping = false;
 
 export function getIndexStatus(): IndexStatus {
   return { ...status };
@@ -115,7 +128,11 @@ function buildStatements() {
         meta_state  = CASE WHEN photos.mtime_ms <> @mtime_ms OR photos.size <> @size
                            THEN ${META_PENDING} ELSE photos.meta_state END,
         taken_at    = CASE WHEN photos.mtime_ms <> @mtime_ms OR photos.size <> @size
-                           THEN @mtime_ms ELSE photos.taken_at END
+                           THEN @mtime_ms ELSE photos.taken_at END,
+        -- New bytes deserve a fresh set of attempts, even for a file that was
+        -- retired as unreadable before.
+        meta_attempts = CASE WHEN photos.mtime_ms <> @mtime_ms OR photos.size <> @size
+                             THEN 0 ELSE photos.meta_attempts END
     `),
     stale: db.prepare<[number], { id: number; content_key: string }>(
       'SELECT id, content_key FROM photos WHERE seen_gen <> ?',
@@ -140,10 +157,27 @@ function buildStatements() {
         meta_state = @meta_state
       WHERE id = @id
     `),
-    claim: db.prepare<[number]>(`UPDATE photos SET meta_state = ${META_INFLIGHT} WHERE id = ?`),
+    claim: db.prepare<[number]>(
+      `UPDATE photos SET meta_state = ${META_INFLIGHT}, meta_attempts = meta_attempts + 1
+       WHERE id = ?`,
+    ),
+    stuck: db.prepare<[], { id: number; rel_path: string; meta_attempts: number }>(
+      `SELECT id, rel_path, meta_attempts FROM photos WHERE meta_state = ${META_INFLIGHT}`,
+    ),
+    retire: db.prepare<[number]>(
+      `UPDATE photos SET meta_state = ${META_FAILED}
+       WHERE meta_state = ${META_INFLIGHT} AND meta_attempts >= ?`,
+    ),
     reclaimAll: db.prepare<[]>(
       `UPDATE photos SET meta_state = ${META_PENDING} WHERE meta_state = ${META_INFLIGHT}`,
     ),
+    /** Reclaim without charging an attempt — for a shutdown we asked for. */
+    releaseAll: db.prepare<[]>(
+      `UPDATE photos SET meta_state = ${META_PENDING},
+                         meta_attempts = MAX(0, meta_attempts - 1)
+       WHERE meta_state = ${META_INFLIGHT}`,
+    ),
+    failOne: db.prepare<[number]>(`UPDATE photos SET meta_state = ${META_FAILED} WHERE id = ?`),
   };
 }
 
@@ -246,11 +280,31 @@ async function walk(gen: number): Promise<void> {
  */
 async function extractPending(): Promise<void> {
   const db = getDb();
-  const { pending, pendingCount, applyMeta, claim, reclaimAll } = statements();
+  const { pending, pendingCount, applyMeta, claim, stuck, retire, reclaimAll, failOne } =
+    statements();
   const pool = getMetadataPool();
 
-  // Recover anything a previous run left claimed.
-  reclaimAll.run();
+  // Recover anything a previous run left claimed. Rows still claimed here were
+  // in a worker when it died — usually because the whole server was killed
+  // mid-extraction — so anything that has burned through its attempts is retired
+  // rather than fed to the extractor again.
+  const abandoned = stuck.all();
+  if (abandoned.length > 0) {
+    const retired = abandoned.filter((r) => r.meta_attempts >= MAX_META_ATTEMPTS);
+    for (const row of retired) {
+      console.warn(
+        `[indexer] giving up on ${row.rel_path} after ${row.meta_attempts} failed extraction attempts`,
+      );
+    }
+    if (retired.length > 0) {
+      status.lastError = `Skipped ${retired.length} file(s) that could not be read: ${retired
+        .slice(0, 3)
+        .map((r) => r.rel_path)
+        .join(', ')}${retired.length > 3 ? ', …' : ''}`;
+    }
+    retire.run(MAX_META_ATTEMPTS);
+    reclaimAll.run();
+  }
 
   status.total = pendingCount.get()?.n ?? 0;
   status.processed = 0;
@@ -261,6 +315,7 @@ async function extractPending(): Promise<void> {
 
   const writeResults = db.transaction((results: MetaResult[]) => {
     for (const r of results) {
+      if (!r) continue;
       applyMeta.run({
         id: r.id,
         width: r.width,
@@ -285,39 +340,70 @@ async function extractPending(): Promise<void> {
 
   // Keep every worker fed: hand out `poolSize` batches and refill as they land.
   const inFlight = new Set<Promise<void>>();
+  // Batches whose worker died, queued for a second run one file at a time.
+  const retries: MetaJob[][] = [];
   let exhausted = false;
 
-  const dispatch = (): boolean => {
-    const rows = pending.all(META_BATCH);
-    if (rows.length === 0) return false;
+  const claimRows = db.transaction((ids: number[]) => {
+    for (const id of ids) claim.run(id);
+  });
 
-    const jobs: MetaJob[] = rows.map((row) => ({
+  const advance = (by: number): void => {
+    status.processed += by;
+    status.pending = Math.max(0, status.total - status.processed);
+    emitStatus();
+  };
+
+  const nextJobs = (): MetaJob[] | null => {
+    const retry = retries.shift();
+    if (retry) return retry;
+
+    const rows = pending.all(META_BATCH);
+    if (rows.length === 0) return null;
+
+    // Claim the rows immediately so the next `pending.all()` returns new ones.
+    claimRows(rows.map((r) => r.id));
+    return rows.map((row) => ({
       id: row.id,
       absPath: absFromRel(row.rel_path),
       fileName: row.name,
       mtimeMs: row.mtime_ms,
     }));
+  };
 
-    // Claim the rows immediately so the next `pending.all()` returns new ones.
-    const claimRows = db.transaction((ids: number[]) => {
-      for (const id of ids) claim.run(id);
-    });
-    claimRows(rows.map((r) => r.id));
+  const dispatch = (): boolean => {
+    const jobs = nextJobs();
+    if (!jobs) return false;
 
     const task = pool
       .run(jobs)
       .then((results) => {
         writeResults(results);
-        status.processed += results.length;
-        status.pending = Math.max(0, status.total - status.processed);
-        emitStatus();
+        advance(results.length);
       })
-      .catch(() => {
-        // Batch lost to a worker crash; leave the rows claimed so this pass
-        // terminates, and let the next scan's reclaim retry them.
-        status.processed += jobs.length;
-        status.pending = Math.max(0, status.total - status.processed);
-        emitStatus();
+      .catch((err: Error) => {
+        // Shutting down: these rows are still claimed, and `stopIndexer` hands
+        // them back untouched. Nothing here is the file's fault.
+        if (stopping) return;
+
+        // The worker died holding this batch — almost always one file libvips
+        // could not survive. Re-run the batch one file at a time so the rest of
+        // it still gets indexed and the culprit can be named.
+        if (jobs.length > 1) {
+          for (const job of jobs) retries.push([job]);
+          // A retry queued after the table drained still has to be dispatched.
+          exhausted = false;
+          return;
+        }
+
+        const job = jobs[0];
+        if (!job) return;
+        console.warn(
+          `[indexer] skipping ${job.absPath}: the metadata worker died reading it (${err.message})`,
+        );
+        failOne.run(job.id);
+        status.lastError = `Skipped ${relFromAbs(job.absPath)}: could not be read`;
+        advance(1);
       })
       .finally(() => {
         inFlight.delete(task);
@@ -328,8 +414,8 @@ async function extractPending(): Promise<void> {
   };
 
   const concurrency = pool.size + 1;
-  while (!exhausted || inFlight.size > 0) {
-    while (!exhausted && inFlight.size < concurrency) {
+  while ((!exhausted && !stopping) || inFlight.size > 0) {
+    while (!exhausted && !stopping && inFlight.size < concurrency) {
       if (!dispatch()) exhausted = true;
     }
     if (inFlight.size > 0) await Promise.race(inFlight);
@@ -571,6 +657,7 @@ export async function applyIndexMode(): Promise<void> {
 }
 
 export async function startIndexer(): Promise<void> {
+  stopping = false;
   status.lastScanAt = Number(getMeta('last_scan_at') ?? '') || null;
   await applyIndexMode();
   // Always reconcile on boot, whatever the mode — the folder may have changed
@@ -579,10 +666,17 @@ export async function startIndexer(): Promise<void> {
 }
 
 export async function stopIndexer(): Promise<void> {
+  stopping = true;
   cancelScan();
   if (intervalTimer) clearInterval(intervalTimer);
   if (watchFlushTimer) clearTimeout(watchFlushTimer);
   await stopWatching();
+
+  // Stop the workers before releasing their claims, so nothing writes a result
+  // for a row we have just handed back. An orderly stop must not count against
+  // those files: only a worker dying on its own says anything about the bytes.
+  await destroyMetadataPool();
+  if (stmts) stmts.releaseAll.run();
 }
 
 export { isUnsupportedImage };

@@ -1,13 +1,16 @@
+import { fork, type ChildProcess } from 'node:child_process';
 import os from 'node:os';
-import { Worker } from 'node:worker_threads';
+import url from 'node:url';
 import type { MetaJob, MetaResult, WorkerRequest, WorkerResponse } from './metadata-worker.js';
 
 /** tsx compiles the worker entry on the fly in dev; prod loads the built .js. */
 const RUNNING_FROM_SOURCE = import.meta.url.endsWith('.ts');
 
-const WORKER_URL = new URL(
-  RUNNING_FROM_SOURCE ? './metadata-worker.ts' : './metadata-worker.js',
-  import.meta.url,
+const WORKER_PATH = url.fileURLToPath(
+  new URL(
+    RUNNING_FROM_SOURCE ? './metadata-worker.ts' : './metadata-worker.js',
+    import.meta.url,
+  ),
 );
 
 interface PendingBatch {
@@ -16,14 +19,24 @@ interface PendingBatch {
 }
 
 interface Slot {
-  worker: Worker;
-  busy: boolean;
+  child: ChildProcess;
+  /** The batch this worker is chewing on, or null when idle. */
+  batchId: number | null;
+  /** Set once the child has died, so `error` and `exit` only retire it once. */
+  dead: boolean;
 }
 
 /**
- * A small worker-thread pool for EXIF extraction. Keeping this off the main
- * thread is what lets the HTTP server stay responsive while a large library is
- * being indexed.
+ * A small pool of child processes for EXIF extraction.
+ *
+ * Child processes, not worker threads: libvips decodes untrusted image bytes,
+ * and a malformed file can make it abort rather than return an error. Threads
+ * share the process, so such an abort would take the whole server with it —
+ * on Windows it surfaces as exit code 3221226505 (0xC0000409, __fastfail).
+ * Out of process, the blast radius is one child, which the pool replaces.
+ *
+ * Keeping the work off the main thread is also what lets the HTTP server stay
+ * responsive while a large library is being indexed.
  */
 export class MetadataPool {
   private readonly slots: Slot[] = [];
@@ -41,37 +54,58 @@ export class MetadataPool {
   }
 
   private spawn(): Slot {
-    const worker = new Worker(WORKER_URL, {
+    const child = fork(WORKER_PATH, [], {
       execArgv: RUNNING_FROM_SOURCE ? ['--import', 'tsx'] : [],
+      // Let the child's own diagnostics (and libvips' warnings) reach our log.
+      stdio: ['ignore', 'inherit', 'inherit', 'ipc'],
     });
-    const slot: Slot = { worker, busy: false };
+    const slot: Slot = { child, batchId: null, dead: false };
 
-    worker.on('message', (msg: WorkerResponse) => {
-      const batch = this.pending.get(msg.batchId);
-      this.pending.delete(msg.batchId);
-      slot.busy = false;
+    child.on('message', (msg: WorkerResponse) => {
+      const batch = this.take(slot);
       batch?.resolve(msg.results);
       this.drain();
     });
 
-    worker.on('error', (err) => {
-      slot.busy = false;
-      // A crashed worker takes its in-flight batch with it. Fail that batch and
-      // replace the thread so the scan can carry on.
-      for (const [id, batch] of this.pending) {
-        this.pending.delete(id);
-        batch.reject(err);
-        break;
-      }
+    // A child that dies mid-batch takes that batch with it. Fail the batch so
+    // the caller can decide what to do with those files, then replace the child
+    // so the scan carries on.
+    const retire = (err: Error): void => {
+      if (slot.dead) return;
+      slot.dead = true;
+
+      this.take(slot)?.reject(err);
+
       if (!this.destroyed) {
         const idx = this.slots.indexOf(slot);
         if (idx !== -1) this.slots[idx] = this.spawn();
       }
       this.drain();
+    };
+
+    child.on('error', retire);
+    child.on('exit', (code, signal) => {
+      if (this.destroyed) return;
+      retire(
+        new Error(
+          `metadata worker exited unexpectedly (code ${code ?? 'null'}, signal ${signal ?? 'none'})`,
+        ),
+      );
     });
 
-    worker.unref();
+    // The pool must never be the reason the process stays alive.
+    child.unref();
+    child.channel?.unref();
     return slot;
+  }
+
+  /** Detaches the batch a slot is holding, marking the slot idle. */
+  private take(slot: Slot): PendingBatch | undefined {
+    if (slot.batchId === null) return undefined;
+    const batch = this.pending.get(slot.batchId);
+    this.pending.delete(slot.batchId);
+    slot.batchId = null;
+    return batch;
   }
 
   /** Extracts metadata for a batch of files on the first free worker. */
@@ -87,30 +121,51 @@ export class MetadataPool {
 
   private drain(): void {
     while (this.queue.length > 0) {
-      const slot = this.slots.find((s) => !s.busy);
+      const slot = this.slots.find((s) => !s.dead && s.batchId === null);
       if (!slot) return;
 
       const next = this.queue.shift();
       if (!next) return;
 
       const batchId = this.nextBatchId++;
-      slot.busy = true;
+      slot.batchId = batchId;
       this.pending.set(batchId, next.batch);
-      slot.worker.postMessage({ batchId, jobs: next.jobs } satisfies WorkerRequest);
+      slot.child.send({ batchId, jobs: next.jobs } satisfies WorkerRequest, (err) => {
+        // The channel closed between `find` and `send` — the exit handler has
+        // not fired yet, so fail the batch here.
+        if (err) {
+          if (slot.dead) return;
+          slot.dead = true;
+          this.take(slot)?.reject(err);
+          this.drain();
+        }
+      });
     }
   }
 
   async destroy(): Promise<void> {
     this.destroyed = true;
-    await Promise.all(this.slots.map((slot) => slot.worker.terminate()));
+    const slots = [...this.slots];
     this.slots.length = 0;
+
+    await Promise.all(
+      slots.map(
+        (slot) =>
+          new Promise<void>((resolve) => {
+            if (slot.child.exitCode !== null || slot.child.signalCode !== null) return resolve();
+            slot.child.once('exit', () => resolve());
+            slot.child.kill();
+          }),
+      ),
+    );
   }
 }
 
 function defaultPoolSize(): number {
   const cpus = os.cpus().length || 4;
-  // Leave a core for the HTTP server and sharp's own thread pool.
-  return Math.max(1, Math.min(6, cpus - 1));
+  // One process per worker costs real memory (sharp + libvips is ~60 MB each),
+  // so this is capped tighter than a thread pool would be.
+  return Math.max(1, Math.min(4, cpus - 1));
 }
 
 let pool: MetadataPool | null = null;

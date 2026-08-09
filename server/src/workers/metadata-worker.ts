@@ -1,4 +1,5 @@
-import { parentPort } from 'node:worker_threads';
+import process from 'node:process';
+import sharp from 'sharp';
 import { extractMetadata, type ExtractedMeta } from '../metadata.js';
 
 export interface MetaJob {
@@ -22,10 +23,42 @@ export interface WorkerResponse {
   results: MetaResult[];
 }
 
-if (!parentPort) throw new Error('metadata-worker must be run as a worker thread');
-const port = parentPort;
+if (typeof process.send !== 'function') {
+  throw new Error('metadata-worker must be run as a forked child process');
+}
+const send = process.send.bind(process);
 
-port.on('message', (msg: WorkerRequest) => {
+// The pool already runs one of these per core. Letting libvips fan out inside
+// each one on top of that just thrashes, and its pixel cache is dead weight
+// when every file is visited exactly once.
+sharp.concurrency(1);
+sharp.cache(false);
+
+// Never outlive the pool: if the parent goes away, so do we.
+process.on('disconnect', () => process.exit(0));
+
+/** A file that blew up mid-extraction still needs a row, marked failed. */
+function failedResult(id: number, mtimeMs: number): MetaResult {
+  return {
+    id,
+    width: null,
+    height: null,
+    orientation: null,
+    takenAt: mtimeMs,
+    takenSrc: 'mtime',
+    camera: null,
+    lens: null,
+    iso: null,
+    fnum: null,
+    exposure: null,
+    focal: null,
+    gpsLat: null,
+    gpsLon: null,
+    failed: true,
+  };
+}
+
+process.on('message', (msg: WorkerRequest) => {
   void (async () => {
     // Two at a time inside each worker: sharp offloads decoding to libuv, so a
     // little in-thread overlap hides that latency without oversubscribing.
@@ -37,12 +70,19 @@ port.on('message', (msg: WorkerRequest) => {
         const i = next++;
         const job = msg.jobs[i];
         if (!job) return;
-        const meta = await extractMetadata(job.absPath, job.fileName, job.mtimeMs);
-        results[i] = { id: job.id, ...meta };
+        try {
+          const meta = await extractMetadata(job.absPath, job.fileName, job.mtimeMs);
+          results[i] = { id: job.id, ...meta };
+        } catch (err) {
+          // extractMetadata is meant to swallow everything; if it ever does not,
+          // one file must still not cost the batch.
+          console.warn(`metadata worker: ${job.absPath}: ${(err as Error).message}`);
+          results[i] = failedResult(job.id, job.mtimeMs);
+        }
       }
     };
 
     await Promise.all([runner(), runner()]);
-    port.postMessage({ batchId: msg.batchId, results } satisfies WorkerResponse);
+    send({ batchId: msg.batchId, results } satisfies WorkerResponse);
   })();
 });
