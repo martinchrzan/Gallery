@@ -28,7 +28,14 @@ import { destroyImagePool, getImagePool } from './workers/pool.js';
 import type { MetaJob, MetaResult } from './workers/image-worker.js';
 
 const WALK_BATCH = 500;
-const META_BATCH = 32;
+/**
+ * Files handed to a worker in one go. A worker only answers once the whole batch
+ * is done, and nothing preempts a running batch, so this is also the worst-case
+ * wait a browser asking for a thumbnail mid-scan can inherit. Kept small for
+ * that reason: the IPC round trip it amortises costs microseconds, while each
+ * extra file in the batch can cost a second on a slow disk.
+ */
+const META_BATCH = 8;
 /**
  * How often one file may be handed to the extractor before it is retired.
  * A file that kills its worker process never reports a result, so without this
@@ -413,7 +420,13 @@ async function extractPending(): Promise<void> {
     return true;
   };
 
-  const concurrency = pool.size + 1;
+  // One worker below the pool size, so a slot stays free for the thumbnail
+  // requests a browser is waiting on. Saturating the pool made "urgent" jobs
+  // meaningless — they still had to wait for a whole batch to drain.
+  //
+  // The floor of 1 matters: at 0 the dispatch loop below would spin without ever
+  // handing out work.
+  const concurrency = Math.max(1, pool.size - 1);
   while ((!exhausted && !stopping) || inFlight.size > 0) {
     while (!exhausted && !stopping && inFlight.size < concurrency) {
       if (!dispatch()) exhausted = true;
