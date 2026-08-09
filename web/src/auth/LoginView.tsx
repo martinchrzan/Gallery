@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { api, type AuthState } from '../api/client';
-import { IconImage } from '../components/icons';
+import { Logo } from '../components/Logo';
 
 interface LoginViewProps {
   onSignedIn: (state: AuthState) => void;
@@ -33,9 +33,7 @@ export function LoginView({ onSignedIn }: LoginViewProps): React.ReactElement {
     <div className="login">
       <form className="login-card" onSubmit={(event) => void submit(event)}>
         <div className="login-brand">
-          <span className="brand-mark" aria-hidden>
-            <IconImage size={18} />
-          </span>
+          <Logo size={34} />
           <span>Photo Gallery</span>
         </div>
 

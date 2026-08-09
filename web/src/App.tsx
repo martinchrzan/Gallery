@@ -11,7 +11,8 @@ import { LoginView } from './auth/LoginView';
 import { FilesView } from './files/FilesView';
 import { GalleryView } from './gallery/GalleryView';
 import { SettingsView } from './settings/SettingsView';
-import { IconImage, IconSettings, IconSignOut } from './components/icons';
+import { IconSettings, IconSignOut } from './components/icons';
+import { Logo } from './components/Logo';
 import { useIndexStatus } from './lib/hooks';
 import { formatCount } from './lib/format';
 
@@ -100,10 +101,8 @@ export default function App(): React.ReactElement {
     <div className="app">
       <header className="topbar">
         <div className="brand">
-          <span className="brand-mark" aria-hidden>
-            <IconImage size={16} />
-          </span>
-          <span>Photo Gallery</span>
+          <Logo size={28} />
+          <span className="brand-name">Photo Gallery</span>
         </div>
 
         {/* A viewer has one destination, so the nav would be a single tab. */}
