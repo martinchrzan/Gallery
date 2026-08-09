@@ -2,11 +2,11 @@ import { createReadStream } from 'node:fs';
 import fsp from 'node:fs/promises';
 import path from 'node:path';
 import type { FastifyInstance, FastifyReply } from 'fastify';
-import { getDb } from '../db.js';
+import { getDb, markMetaFailed, META_FAILED } from '../db.js';
 import { currentUser } from '../guard.js';
 import { absFromRel, realpathWithin } from '../paths.js';
 import { accessScope, dirAllowed } from '../scope.js';
-import { getThumb, isThumbSize } from '../thumbs.js';
+import { getThumb, isThumbSize, ThumbError } from '../thumbs.js';
 
 const MIME_BY_EXT: Record<string, string> = {
   '.jpg': 'image/jpeg',
@@ -32,11 +32,12 @@ interface MediaRow {
   name: string;
   content_key: string;
   size: number;
+  meta_state: number;
 }
 
 function lookup(id: number): MediaRow | undefined {
   return getDb()
-    .prepare('SELECT rel_path, dir, name, content_key, size FROM photos WHERE id = ?')
+    .prepare('SELECT rel_path, dir, name, content_key, size, meta_state FROM photos WHERE id = ?')
     .get(id) as MediaRow | undefined;
 }
 
@@ -108,6 +109,12 @@ export async function mediaRoutes(app: FastifyInstance): Promise<void> {
         return reply.code(404).send({ error: 'Not found' });
       }
 
+      // Already known to be unreadable — say so without waking a worker. The
+      // client draws its placeholder tile either way.
+      if (row.meta_state === META_FAILED) {
+        return reply.code(415).send({ error: 'Could not render this image' });
+      }
+
       const etag = `"${row.content_key}-${size}"`;
       if (req.headers['if-none-match'] === etag) return reply.code(304).send();
 
@@ -117,6 +124,13 @@ export async function mediaRoutes(app: FastifyInstance): Promise<void> {
         thumbFile = await getThumb(source, row.content_key, size);
       } catch (err) {
         req.log.warn({ err, id, path: row.rel_path }, 'thumbnail generation failed');
+        // The file did not just fail to decode, it killed the decoder. Remember
+        // that, so scrolling past this photo costs one worker rather than one
+        // worker per request.
+        if (err instanceof ThumbError && err.fatal) {
+          req.log.error({ id, path: row.rel_path }, 'image killed its worker; marking unreadable');
+          markMetaFailed(id);
+        }
         return reply.code(415).send({ error: 'Could not render this image' });
       }
 

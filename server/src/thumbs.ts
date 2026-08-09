@@ -1,8 +1,7 @@
 import fsp from 'node:fs/promises';
-import os from 'node:os';
 import path from 'node:path';
-import sharp from 'sharp';
 import { config } from './config.js';
+import { getImagePool, WorkerCrashError } from './workers/pool.js';
 
 /**
  * Whitelisted thumbnail heights. An open-ended `?h=` would let anyone fill the
@@ -16,31 +15,25 @@ export function isThumbSize(value: unknown): value is ThumbSize {
   return THUMB_SIZES.includes(Number(value) as ThumbSize);
 }
 
-// libvips is already multi-threaded per operation; running one job per core on
-// top of that just thrashes. Cap concurrent jobs and let sharp use the rest.
-const MAX_CONCURRENT = Math.max(2, Math.min(8, (os.cpus().length || 4) - 1));
-sharp.concurrency(Math.max(1, Math.floor((os.cpus().length || 4) / 2)));
-// Long scans stream thousands of distinct files; the pixel cache only wastes RAM.
-sharp.cache({ files: 0, items: 0, memory: 64 });
+/**
+ * A thumbnail that could not be produced.
+ *
+ * `fatal` separates "libvips refused this image" from "libvips died on this
+ * image". The second kind is worth remembering: the file is a live grenade, and
+ * re-rendering it on every request would cost a worker process each time.
+ */
+export class ThumbError extends Error {
+  readonly fatal: boolean;
 
-let active = 0;
-const waiting: (() => void)[] = [];
+  constructor(message: string, fatal: boolean) {
+    super(message);
+    this.name = 'ThumbError';
+    this.fatal = fatal;
+  }
+}
+
 /** Coalesces concurrent requests for the same thumbnail onto one render. */
 const inFlight = new Map<string, Promise<string>>();
-
-async function acquire(): Promise<void> {
-  if (active < MAX_CONCURRENT) {
-    active++;
-    return;
-  }
-  await new Promise<void>((resolve) => waiting.push(resolve));
-  active++;
-}
-
-function release(): void {
-  active--;
-  waiting.shift()?.();
-}
 
 export function thumbPath(contentKey: string, size: ThumbSize): string {
   return path.join(config().thumbDir, String(size), contentKey.slice(0, 2), `${contentKey}.webp`);
@@ -73,38 +66,18 @@ export async function getThumb(
   return job;
 }
 
+/**
+ * Renders through the worker pool. Nothing in this process ever hands bytes to
+ * libvips, so a file that aborts the decoder costs one worker, not the server.
+ * The pool also bounds how many renders run at once.
+ */
 async function renderThumb(absSource: string, dest: string, size: ThumbSize): Promise<string> {
-  await acquire();
   try {
-    await fsp.mkdir(path.dirname(dest), { recursive: true });
-
-    const buffer = await sharp(absSource, { failOn: 'none', animated: false })
-      // `rotate()` with no argument applies the EXIF orientation and strips it,
-      // so the browser never double-rotates.
-      .rotate()
-      .resize({
-        height: size,
-        width: size * 3,
-        fit: 'inside',
-        withoutEnlargement: true,
-      })
-      .webp({ quality: size >= 1600 ? 82 : 78, effort: 4 })
-      .toBuffer();
-
-    // Write to a temp name first: a crash mid-write must never leave a
-    // truncated file that later looks like a valid cache hit.
-    const tmp = `${dest}.${process.pid}.${Math.random().toString(36).slice(2)}.tmp`;
-    await fsp.writeFile(tmp, buffer);
-    await fsp.rename(tmp, dest).catch(async (err: NodeJS.ErrnoException) => {
-      // Another process won the race; its file is equally valid.
-      await fsp.rm(tmp, { force: true });
-      if (err.code !== 'EEXIST' && err.code !== 'EPERM') throw err;
-    });
-
-    return dest;
-  } finally {
-    release();
+    await getImagePool().renderThumb({ absPath: absSource, dest, size });
+  } catch (err) {
+    throw new ThumbError((err as Error).message, err instanceof WorkerCrashError);
   }
+  return dest;
 }
 
 /** Removes every cached size for a photo (called when its source disappears). */

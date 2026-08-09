@@ -22,10 +22,10 @@ import {
   relFromAbs,
   toRelPosix,
 } from './paths.js';
-import { deleteThumbs, getThumb, hasThumb } from './thumbs.js';
+import { deleteThumbs, getThumb, hasThumb, ThumbError } from './thumbs.js';
 import type { IndexStatus } from './types.js';
-import { destroyMetadataPool, getMetadataPool } from './workers/pool.js';
-import type { MetaJob, MetaResult } from './workers/metadata-worker.js';
+import { destroyImagePool, getImagePool } from './workers/pool.js';
+import type { MetaJob, MetaResult } from './workers/image-worker.js';
 
 const WALK_BATCH = 500;
 const META_BATCH = 32;
@@ -282,7 +282,7 @@ async function extractPending(): Promise<void> {
   const db = getDb();
   const { pending, pendingCount, applyMeta, claim, stuck, retire, reclaimAll, failOne } =
     statements();
-  const pool = getMetadataPool();
+  const pool = getImagePool();
 
   // Recover anything a previous run left claimed. Rows still claimed here were
   // in a worker when it died — usually because the whole server was killed
@@ -429,8 +429,11 @@ async function extractPending(): Promise<void> {
 async function prewarm(signal: { cancelled: boolean }): Promise<void> {
   const db = getDb();
   const rows = db
-    .prepare('SELECT rel_path, content_key FROM photos ORDER BY taken_at DESC')
-    .all() as { rel_path: string; content_key: string }[];
+    .prepare(
+      `SELECT id, rel_path, content_key FROM photos
+       WHERE meta_state <> ${META_FAILED} ORDER BY taken_at DESC`,
+    )
+    .all() as { id: number; rel_path: string; content_key: string }[];
 
   status.phase = 'prewarming';
   status.total = rows.length;
@@ -445,7 +448,14 @@ async function prewarm(signal: { cancelled: boolean }): Promise<void> {
       const row = rows[cursor++];
       if (!row) return;
       if (!(await hasThumb(row.content_key, 320))) {
-        await getThumb(absFromRel(row.rel_path), row.content_key, 320).catch(() => {});
+        await getThumb(absFromRel(row.rel_path), row.content_key, 320).catch((err: unknown) => {
+          // A file that kills the renderer is retired here rather than waiting
+          // for someone to scroll past it in the gallery.
+          if (err instanceof ThumbError && err.fatal) {
+            console.warn(`[indexer] ${row.rel_path} killed the thumbnail worker; marking unreadable`);
+            statements().failOne.run(row.id);
+          }
+        });
       }
       status.processed++;
       if (status.processed % 25 === 0) emitStatus();
@@ -675,7 +685,7 @@ export async function stopIndexer(): Promise<void> {
   // Stop the workers before releasing their claims, so nothing writes a result
   // for a row we have just handed back. An orderly stop must not count against
   // those files: only a worker dying on its own says anything about the bytes.
-  await destroyMetadataPool();
+  await destroyImagePool();
   if (stmts) stmts.releaseAll.run();
 }
 

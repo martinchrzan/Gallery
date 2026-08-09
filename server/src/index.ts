@@ -13,7 +13,7 @@ import { getDb } from './db.js';
 import { authGuard } from './guard.js';
 import { startIndexer, stopIndexer } from './indexer.js';
 import { PathError } from './paths.js';
-import { destroyMetadataPool } from './workers/pool.js';
+import { destroyImagePool } from './workers/pool.js';
 import { authRoutes } from './routes/auth.js';
 import { filesRoutes } from './routes/files.js';
 import { galleryRoutes } from './routes/gallery.js';
@@ -167,7 +167,7 @@ async function main(): Promise<void> {
     app.log.info(`${signal} received, shutting down`);
     try {
       await stopIndexer();
-      await destroyMetadataPool();
+      await destroyImagePool();
       await app.close();
     } finally {
       process.exit(0);

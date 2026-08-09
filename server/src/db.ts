@@ -148,6 +148,16 @@ export function setMeta(key: string, value: string): void {
     .run(key, value);
 }
 
+/* --------------------------------------------------------------- photos -- */
+
+/**
+ * Records that this photo's bytes cannot be read. Called when a file kills the
+ * worker that touched it, so nothing hands it to libvips a second time.
+ */
+export function markMetaFailed(id: number): void {
+  getDb().prepare(`UPDATE photos SET meta_state = ${META_FAILED} WHERE id = ?`).run(id);
+}
+
 /* -------------------------------------------------------------- settings -- */
 
 export function getSettings(): Settings {
