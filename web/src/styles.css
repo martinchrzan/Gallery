@@ -1311,6 +1311,43 @@ input[type='checkbox'] {
     display: none;
   }
 
+  /* The lightbox bar is a single non-wrapping row, so on a phone its desktop
+     contents overflow and the trailing actions — Details, Download — are simply
+     cut off the right edge. Everything that touch already covers goes away, and
+     what stays is reduced to its icon. */
+  .lightbox-bar {
+    gap: 6px;
+    padding: 10px 12px;
+  }
+
+  /* Pinch and double-tap zoom, so the slider is dead weight on touch. */
+  .zoom-slider {
+    display: none;
+  }
+
+  .zoom-mode {
+    width: auto;
+    flex: 0 0 auto;
+    padding: 6px 10px;
+  }
+
+  .lightbox-bar .btn {
+    padding: 8px 10px;
+  }
+
+  /* Every remaining control is icon-only here; the names live on aria-label. */
+  .lightbox-bar .btn-label {
+    display: none;
+  }
+
+  /* The one flexible item: it gives up whatever width the buttons need and
+     ellipsises, rather than pushing them off-screen. */
+  .lightbox-title {
+    flex: 0 1 auto;
+    min-width: 0;
+    max-width: none;
+  }
+
   .lightbox-meta {
     position: absolute;
     inset: auto 0 0 0;
@@ -1332,6 +1369,15 @@ input[type='checkbox'] {
   .files {
     padding-left: 12px;
     padding-right: 12px;
+  }
+}
+
+@media (max-width: 430px) {
+  /* On the narrowest phones even the icon-only zoom modes crowd out the file
+     name. Double-tap toggles fit against zoom, so nothing is lost by dropping
+     them; the badge still reports the current percentage. */
+  .lightbox-bar .zoom-modes {
+    display: none;
   }
 }
 

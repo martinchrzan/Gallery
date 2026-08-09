@@ -311,33 +311,41 @@ export function Lightbox({
             className={`zoom-mode${atFit ? ' active' : ''}`}
             onClick={() => reset()}
             title="Fit to screen (F)"
+            aria-label="Fit to screen"
             aria-pressed={atFit}
           >
             <IconCollapse size={13} />
-            Fit
+            <span className="btn-label">Fit</span>
           </button>
           <button
             className={`zoom-mode${atActualSize ? ' active' : ''}`}
             onClick={() => zoomTo(1)}
             title="Actual size, 1:1"
+            aria-label="Actual size"
             aria-pressed={atActualSize}
           >
             <IconExpand size={13} />
-            1:1
+            <span className="btn-label">1:1</span>
           </button>
         </div>
         <button
           className={`btn${showMeta ? ' btn-on' : ''}`}
           onClick={() => setShowMeta((value) => !value)}
           title="Toggle details (I)"
+          aria-label="Toggle details"
           aria-pressed={showMeta}
         >
           <IconInfo />
-          Details
+          <span className="btn-label">Details</span>
         </button>
-        <button className="btn" onClick={download} title="Download original (D)">
+        <button
+          className="btn"
+          onClick={download}
+          title="Download original (D)"
+          aria-label="Download original"
+        >
           <IconDownload />
-          Download
+          <span className="btn-label">Download</span>
         </button>
       </div>
 

@@ -160,6 +160,10 @@ async function main(): Promise<void> {
 
   await app.listen({ port: cfg.port, host: cfg.host });
   app.log.info(`serving photos from ${cfg.photosRoot}`);
+  // Says out loud which build is running. A libvips crash is invisible from the
+  // outside — it kills the process with a bare Windows exit code and no stack —
+  // so seeing this line is how you know decoding happens somewhere survivable.
+  app.log.info('image decoding runs in isolated worker processes');
 
   await startIndexer();
 
