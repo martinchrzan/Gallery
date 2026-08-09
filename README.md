@@ -56,6 +56,43 @@ npm run dev        # API on :4000, Vite dev server on :5173 with hot reload
 npm run typecheck
 ```
 
+### Running as a Windows service
+
+Scripts in [`deploy/windows`](deploy/windows) register the gallery to start at boot and restart if
+it exits. Build first (`npm ci && npm run build`), then run one of them from an **elevated**
+PowerShell prompt.
+
+The service route needs [NSSM](https://nssm.cc/download) — a single `nssm.exe`, either on `PATH` or
+passed with `-NssmPath`:
+
+```powershell
+.\deploy\windows\install-service.ps1 -PhotosRoot 'D:\Photos' -DataDir 'C:\GalleryData'
+```
+
+The Scheduled Task route needs no download, but stopping it terminates Node instead of sending
+Ctrl+C, so the `SIGINT` handler never runs. SQLite is in WAL mode and recovers, but the service is
+cleaner:
+
+```powershell
+.\deploy\windows\install-task.ps1 -PhotosRoot 'D:\Photos' -DataDir 'C:\GalleryData'
+```
+
+Both accept `-Port`, `-BindHost`, `-TrustProxy`, and a `-ServiceName`/`-TaskName`, and both write
+the settings as environment variables, so no `config.json` is needed on the server.
+`.\deploy\windows\uninstall.ps1` removes whichever one you installed and leaves `DataDir` intact.
+
+Two things worth getting right:
+
+- **Keep `DataDir` on a local SSD.** The SQLite index and the thumbnail cache take far more small
+  reads and writes than the photos themselves. Putting them on a network share costs more than any
+  other tuning decision here.
+- **A UNC `photosRoot` will not work as-is.** Services and tasks default to `LocalSystem`, which has
+  no access to network shares; both scripts warn and tell you how to supply an account. Indexing
+  over SMB is also much slower than local disk — running the gallery on the machine that physically
+  holds the photos is the faster arrangement by a wide margin.
+
+On the first run the admin access code is printed to `<DataDir>\logs\gallery.out.log`.
+
 ## Access control
 
 There are two roles. An **admin** sees everything and configures the server. A **viewer** gets the
