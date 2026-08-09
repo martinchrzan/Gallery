@@ -39,7 +39,8 @@ export interface Settings {
    *
    * An empty array means an empty gallery — the selection is explicit, so
    * deselecting everything shows nothing rather than silently reverting to all.
-   * New installs start at `['']` so the gallery works before it is configured.
+   * New installs start at `[]` so a fresh admin must opt in to a folder rather
+   * than the whole library being exposed by default.
    */
   galleryFolders: string[];
   indexMode: IndexMode;
@@ -54,7 +55,7 @@ export interface Settings {
 }
 
 export const DEFAULT_SETTINGS: Settings = {
-  galleryFolders: [''],
+  galleryFolders: [],
   indexMode: 'watch',
   indexIntervalHours: 6,
   rowHeight: 240,
