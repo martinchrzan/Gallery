@@ -58,6 +58,7 @@ const status: IndexStatus = {
   total: 0,
   lastScanAt: null,
   lastError: null,
+  watchIssue: null,
 };
 
 /** Bumped whenever the photo set changes, so manifest ETags invalidate. */
@@ -651,18 +652,37 @@ function scheduleWatchFlush(): void {
   watchFlushTimer.unref();
 }
 
+/** Paths this watcher session could not attach to, and the most recent one. */
+let watchErrors = 0;
+
 async function startWatching(): Promise<void> {
   if (watcher) return;
+
+  watchErrors = 0;
+  status.watchIssue = null;
 
   watcher = chokidar.watch(config().photosRoot, {
     ignoreInitial: true,
     followSymlinks: false,
     depth: 20,
     awaitWriteFinish: { stabilityThreshold: 1500, pollInterval: 200 },
-    ignored: (target: string) => {
+    /**
+     * chokidar opens a native watch handle for every *file* it walks, not just
+     * every directory — so on a library of tens of thousands of files this
+     * predicate is what decides how many handles the OS is asked for. Excluding
+     * the files we would ignore anyway cuts that down to the media alone, which
+     * matters most next to a photo manager's own sidecars and databases.
+     *
+     * `stats` is absent on the pre-stat call and present on the one that
+     * decides whether to watch, so keying the file test on it is safe: an
+     * unstatted path is never ignored, and a directory is never mistaken for a
+     * file with an unlucky name.
+     */
+    ignored: (target: string, stats?: { isFile: () => boolean }) => {
       const rel = path.relative(config().photosRoot, target);
       if (rel === '' || rel.startsWith('..')) return false;
-      return rel.split(/[\\/]/).some(isIgnoredDir);
+      if (rel.split(/[\\/]/).some(isIgnoredDir)) return true;
+      return stats?.isFile() === true && !isIndexableMedia(target);
     },
   });
 
@@ -680,12 +700,29 @@ async function startWatching(): Promise<void> {
       // A whole folder vanished; a sweep is the cheapest way to reconcile.
       void scan();
     })
+    /**
+     * Per-path failures, and almost always about one file rather than the
+     * watch as a whole: `UNKNOWN` from a OneDrive placeholder or an SMB share,
+     * `EMFILE` once a big enough tree exhausts the handle budget. chokidar
+     * carries on watching everything else, and a scan still sees these files,
+     * so this is a warning about latency — not the error state of the index.
+     */
     .on('error', (err) => {
-      status.lastError = `watcher: ${(err as Error).message}`;
+      watchErrors++;
+      const message = (err as Error).message;
+      console.warn(`[indexer] watcher could not attach: ${message}`);
+      status.watchIssue =
+        watchErrors === 1 ? message : `${message} (and ${watchErrors - 1} more)`;
+      emitStatus();
     });
 }
 
 async function stopWatching(): Promise<void> {
+  // The warning describes a watcher that no longer exists, so it goes with it —
+  // including when the mode changes to one that does not watch at all.
+  status.watchIssue = null;
+  watchErrors = 0;
+
   if (!watcher) return;
   const w = watcher;
   watcher = null;

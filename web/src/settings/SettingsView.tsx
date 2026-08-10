@@ -219,6 +219,25 @@ export function SettingsView({
               </div>
             </div>
           )}
+
+          {/* Deliberately not styled as an error: the gallery is complete, and
+              the only cost is that these files wait for a scan instead of
+              showing up the moment they land. */}
+          {indexStatus?.watchIssue && (
+            <div className="field">
+              <div>
+                <label>Watching files</label>
+                <div className="desc">
+                  Some files could not be watched for live changes, so they will appear on the next
+                  scan rather than immediately. Common on OneDrive, network shares and very large
+                  folders — switching to <strong>Re-scan on a timer</strong> avoids it entirely.
+                  <div style={{ marginTop: 4, color: 'var(--text-faint)' }}>
+                    {indexStatus.watchIssue}
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
         </section>
 
         <section className="card">

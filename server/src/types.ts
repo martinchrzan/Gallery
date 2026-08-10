@@ -138,6 +138,13 @@ export interface IndexStatus {
   total: number;
   lastScanAt: number | null;
   lastError: string | null;
+  /**
+   * Paths the filesystem watcher could not attach to — a Windows/OneDrive/SMB
+   * condition, not an indexing failure. Kept apart from {@link lastError} so a
+   * single unwatchable file does not report the whole index as broken; the
+   * gallery is complete either way, those files just wait for the next scan.
+   */
+  watchIssue: string | null;
 }
 
 export interface AuthState {
