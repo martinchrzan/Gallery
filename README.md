@@ -93,6 +93,18 @@ Two things worth getting right:
 
 On the first run the admin access code is printed to `<DataDir>\logs\gallery.out.log`.
 
+If `install-service.ps1` reports `Unexpected status SERVICE_START_PENDING in response to START
+control`, NSSM launched Node but the process died before the port opened — NSSM cannot show you
+why. The script's preflight catches the usual causes first (dependencies not installed for that
+copy of the tree, an unreadable `photosRoot`, a port already in use), and on a failed start it
+prints `gallery.err.log` and NSSM's own event-log entries. To see a startup error directly:
+
+```powershell
+cd <repo>\server
+$env:PHOTOS_ROOT='D:\Photos'; $env:DATA_DIR='C:\GalleryData'; $env:NODE_ENV='production'
+node dist\index.js
+```
+
 ## Access control
 
 There are two roles. An **admin** sees everything and configures the server. A **viewer** gets the

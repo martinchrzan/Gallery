@@ -101,12 +101,103 @@ $DataDir = (Resolve-Path $DataDir).Path
 $logDir = Join-Path $DataDir 'logs'
 New-Item -ItemType Directory -Force -Path $logDir | Out-Null
 
+# Stop any existing instance up front: on a reinstall it still holds the port,
+# and the check below would blame the copy we are about to replace.
+$existing = Get-Service -Name $ServiceName -ErrorAction SilentlyContinue
+if ($existing -and $existing.Status -ne 'Stopped') {
+    Write-Host "Service '$ServiceName' is running - stopping it before reinstalling." -ForegroundColor Yellow
+    & $nssmExe stop $ServiceName confirm | Out-Null
+}
+
+# EADDRINUSE is thrown at listen(), after the smoke test below would have
+# passed, and NSSM reports it as the same opaque start failure. Catch it here.
+$busy = Get-NetTCPConnection -LocalPort $Port -State Listen -ErrorAction SilentlyContinue
+if ($busy) {
+    $pid_ = @($busy)[0].OwningProcess
+    $owner = (Get-Process -Id $pid_ -ErrorAction SilentlyContinue).ProcessName
+    throw "Port $Port is already in use by PID $pid_ ($owner). Stop it, or pass -Port <other>."
+}
+
+# --- Smoke test ------------------------------------------------------------
+# Everything that kills the server on startup - unbuilt native modules, a
+# photosRoot the account cannot see, a bad env - happens before the port opens,
+# where NSSM can only report it as "unexpected status SERVICE_START_PENDING".
+# So load the same modules with the same environment here first, in the
+# foreground, where a failure prints its own message.
+#
+# The probe has to sit inside the repo: node resolves `better-sqlite3` by
+# walking up from the file's own directory, and $DataDir is outside the tree.
+
+$serverDir = Join-Path $RepoRoot 'server'
+$probe = Join-Path $serverDir '.install-preflight.mjs'
+$probeOut = Join-Path $logDir 'preflight.out.log'
+$probeErr = Join-Path $logDir 'preflight.err.log'
+
+# Single-quoted: the template literals below must reach node, not PowerShell.
+Set-Content -Path $probe -Encoding ascii -Value @'
+// Written by deploy\windows\install-service.ps1 and deleted again straight
+// away. Loads what index.ts loads before it listens, minus the listening.
+import { loadConfig } from './dist/config.js';
+import Database from 'better-sqlite3';
+import sharp from 'sharp';
+
+const cfg = loadConfig();
+console.log(`photosRoot ${cfg.photosRoot}`);
+console.log(`dataDir    ${cfg.dataDir}`);
+const v = new Database(':memory:').prepare('select sqlite_version() as v').get().v;
+console.log(`sqlite ${v}, libvips ${sharp.versions.vips}`);
+'@
+
+$saved = @{}
+$probeEnv = @{
+    PHOTOS_ROOT = $PhotosRoot
+    DATA_DIR    = $DataDir
+    PORT        = "$Port"
+    HOST        = $BindHost
+    NODE_ENV    = 'production'
+}
+foreach ($key in $probeEnv.Keys) {
+    $saved[$key] = [Environment]::GetEnvironmentVariable($key)
+    Set-Item -Path "env:$key" -Value $probeEnv[$key]
+}
+
+try {
+    # Start-Process rather than `& node ... 2>&1`: in Windows PowerShell the
+    # latter turns every stderr line into an ErrorRecord, which $ErrorAction-
+    # Preference = 'Stop' then throws on before we can read it.
+    $probeRun = Start-Process -FilePath $nodeExe -ArgumentList '.install-preflight.mjs' `
+        -WorkingDirectory $serverDir -NoNewWindow -Wait -PassThru `
+        -RedirectStandardOutput $probeOut -RedirectStandardError $probeErr
+} finally {
+    foreach ($key in $probeEnv.Keys) {
+        if ($null -eq $saved[$key]) { Remove-Item -Path "env:$key" -ErrorAction SilentlyContinue }
+        else { Set-Item -Path "env:$key" -Value $saved[$key] }
+    }
+    Remove-Item -Path $probe -Force -ErrorAction SilentlyContinue
+}
+
+if ($probeRun.ExitCode -ne 0) {
+    $detail = ((Get-Content $probeErr -ErrorAction SilentlyContinue) +
+               (Get-Content $probeOut -ErrorAction SilentlyContinue)) -join [Environment]::NewLine
+    throw @"
+The server failed to start with this configuration, so the service was not
+installed. Node exited with code $($probeRun.ExitCode):
+
+$detail
+
+ERR_MODULE_NOT_FOUND or a missing .node binding means dependencies are not
+installed for this copy of the tree - run 'npm ci' then 'npm run build' in
+$RepoRoot.
+"@
+}
+
+Write-Host 'Preflight passed:' -ForegroundColor Green
+Get-Content $probeOut | ForEach-Object { Write-Host "  $_" }
+
 # --- Install ---------------------------------------------------------------
 
-$existing = Get-Service -Name $ServiceName -ErrorAction SilentlyContinue
 if ($existing) {
-    Write-Host "Service '$ServiceName' already exists - stopping and reconfiguring it." -ForegroundColor Yellow
-    & $nssmExe stop $ServiceName confirm | Out-Null
+    Write-Host "Service '$ServiceName' already exists - reconfiguring it." -ForegroundColor Yellow
 } else {
     & $nssmExe install $ServiceName $nodeExe 'dist\index.js'
     if ($LASTEXITCODE -ne 0) { throw "nssm install failed with exit code $LASTEXITCODE." }
@@ -116,7 +207,7 @@ if ($existing) {
 # config.ts resolves dataDir against the repo root either way.
 & $nssmExe set $ServiceName Application $nodeExe          | Out-Null
 & $nssmExe set $ServiceName AppParameters 'dist\index.js' | Out-Null
-& $nssmExe set $ServiceName AppDirectory (Join-Path $RepoRoot 'server') | Out-Null
+& $nssmExe set $ServiceName AppDirectory $serverDir | Out-Null
 & $nssmExe set $ServiceName DisplayName 'Photo Gallery'   | Out-Null
 & $nssmExe set $ServiceName Description 'Self-hosted photo gallery (Fastify + SQLite).' | Out-Null
 & $nssmExe set $ServiceName Start SERVICE_AUTO_START      | Out-Null
@@ -166,13 +257,63 @@ disk. Running the gallery on the machine that holds the photos is faster.
 }
 
 & $nssmExe start $ServiceName
-if ($LASTEXITCODE -ne 0) { throw "nssm start failed with exit code $LASTEXITCODE. Check $logDir." }
 
-Start-Sleep -Seconds 2
+# Do not trust that exit code on its own. NSSM returns non-zero whenever the
+# service has not reached RUNNING by the time it stops waiting, which looks
+# identical whether the app is crash-looping or merely slow to come up. Ask the
+# server itself instead: /api/health answers as soon as the port is open.
+$healthy = $false
+$deadline = (Get-Date).AddSeconds(45)
+while ((Get-Date) -lt $deadline) {
+    try {
+        $probeUrl = "http://localhost:$Port/api/health"
+        if ((Invoke-WebRequest -Uri $probeUrl -UseBasicParsing -TimeoutSec 3).StatusCode -eq 200) {
+            $healthy = $true
+            break
+        }
+    } catch {
+        # Not listening yet, or already dead - the loop decides which.
+    }
+    Start-Sleep -Milliseconds 500
+}
+
 $svc = Get-Service -Name $ServiceName
 
+if (-not $healthy) {
+    Write-Host ''
+    Write-Warning "'$ServiceName' did not answer on http://localhost:$Port within 45s (service status: $($svc.Status))."
+
+    foreach ($log in @('gallery.err.log', 'gallery.out.log')) {
+        $file = Join-Path $logDir $log
+        Write-Host ''
+        Write-Host "--- $file (last 40 lines) ---" -ForegroundColor Yellow
+        if (Test-Path $file) {
+            Get-Content $file -Tail 40
+        } else {
+            Write-Host '(not created - NSSM never got as far as launching node)'
+        }
+    }
+
+    # When the failure is in NSSM rather than in the app - a bad Application
+    # path, a service account that cannot log on - nothing reaches those logs.
+    Write-Host ''
+    Write-Host '--- Application event log, source nssm ---' -ForegroundColor Yellow
+    try {
+        Get-EventLog -LogName Application -Source nssm -Newest 10 -ErrorAction Stop |
+            Format-Table TimeGenerated, EntryType, Message -AutoSize -Wrap
+    } catch {
+        Write-Host '(no nssm entries)'
+    }
+
+    throw @"
+The service is installed but not serving. The output above is the reason;
+after fixing it, re-run this script - it reconfigures the existing service.
+To remove it entirely: .\uninstall.ps1
+"@
+}
+
 Write-Host ''
-Write-Host "Service '$ServiceName' is $($svc.Status)." -ForegroundColor Green
+Write-Host "Service '$ServiceName' is $($svc.Status) and answering on /api/health." -ForegroundColor Green
 Write-Host "  URL         http://localhost:$Port"
 Write-Host "  Photos      $PhotosRoot"
 Write-Host "  Data        $DataDir"
