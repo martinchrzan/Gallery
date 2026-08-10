@@ -1,19 +1,31 @@
 import { createHash } from 'node:crypto';
 import type { FastifyInstance } from 'fastify';
-import { getDb } from '../db.js';
+import { getDb, KIND_VIDEO } from '../db.js';
 import { currentUser } from '../guard.js';
 import { getDataVersion } from '../indexer.js';
 import { accessScope, folderFilter, galleryScope, photoAllowed } from '../scope.js';
 import type { PhotoDetail, User } from '../types.js';
 
-/** Bytes per manifest record: id u32 | takenAt(sec) u32 | w u16 | h u16. */
-export const MANIFEST_RECORD_BYTES = 12;
+/**
+ * Bytes per manifest record:
+ *   id u32 | takenAt(sec) u32 | w u16 | h u16 | duration(sec) u16 | flags u16
+ *
+ * Still a quarter of what the equivalent JSON costs. The last four bytes are
+ * what a video needs beyond a photo — the badge on its tile, and knowing to
+ * open a player instead of an image.
+ */
+export const MANIFEST_RECORD_BYTES = 16;
+
+/** `flags` bit 0. Everything else in that field is reserved. */
+export const MANIFEST_FLAG_VIDEO = 1;
 
 interface ManifestRow {
   id: number;
   taken_at: number | null;
   width: number | null;
   height: number | null;
+  kind: number;
+  duration_ms: number | null;
 }
 
 function clampU16(value: number | null): number {
@@ -26,7 +38,8 @@ export function buildManifest(user: User): { buffer: Buffer; count: number } {
 
   const rows = getDb()
     .prepare(
-      `SELECT id, taken_at, width, height FROM photos${sql} ORDER BY taken_at DESC, id DESC`,
+      `SELECT id, taken_at, width, height, kind, duration_ms FROM photos${sql}
+       ORDER BY taken_at DESC, id DESC`,
     )
     .all(...params) as ManifestRow[];
 
@@ -34,11 +47,15 @@ export function buildManifest(user: User): { buffer: Buffer; count: number } {
   let offset = 0;
   for (const row of rows) {
     buffer.writeUInt32LE(row.id, offset);
-    // Seconds, not milliseconds: keeps the record at 12 bytes and stays exact
-    // until 2106. Undated photos sort last with 0.
+    // Seconds, not milliseconds: keeps the record compact and stays exact until
+    // 2106. Undated photos sort last with 0.
     buffer.writeUInt32LE(row.taken_at ? Math.floor(row.taken_at / 1000) : 0, offset + 4);
     buffer.writeUInt16LE(clampU16(row.width), offset + 8);
     buffer.writeUInt16LE(clampU16(row.height), offset + 10);
+    // Seconds too, saturating at ~18 hours — the badge only needs a duration a
+    // person can read, and a clip that long is not one.
+    buffer.writeUInt16LE(clampU16(row.duration_ms === null ? null : row.duration_ms / 1000), offset + 12);
+    buffer.writeUInt16LE(row.kind === KIND_VIDEO ? MANIFEST_FLAG_VIDEO : 0, offset + 14);
     offset += MANIFEST_RECORD_BYTES;
   }
 
@@ -96,7 +113,7 @@ export async function galleryRoutes(app: FastifyInstance): Promise<void> {
     const row = getDb()
       .prepare(
         `SELECT id, rel_path, dir, name, size, mtime_ms, width, height, taken_at, taken_src,
-                camera, lens, iso, fnum, exposure, focal, gps_lat, gps_lon
+                camera, lens, iso, fnum, exposure, focal, gps_lat, gps_lon, kind, duration_ms
          FROM photos WHERE id = ?`,
       )
       .get(id) as Record<string, never> | undefined;
@@ -122,9 +139,13 @@ export async function galleryRoutes(app: FastifyInstance): Promise<void> {
       focal: number | null;
       gps_lat: number | null;
       gps_lon: number | null;
+      kind: number;
+      duration_ms: number | null;
     };
 
     const detail: PhotoDetail = {
+      kind: r.kind === KIND_VIDEO ? 'video' : 'photo',
+      duration: r.duration_ms,
       id: r.id,
       path: r.rel_path,
       name: r.name,

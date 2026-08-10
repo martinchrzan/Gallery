@@ -1,6 +1,6 @@
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
-import { getDb, getSettings, saveSettings } from '../db.js';
+import { getDb, getSettings, KIND_VIDEO, saveSettings } from '../db.js';
 import { currentUser, requireAdmin } from '../guard.js';
 import { applyIndexMode, getIndexStatus, indexEvents, scan } from '../indexer.js';
 import { toRelPosix } from '../paths.js';
@@ -109,14 +109,22 @@ export async function settingsRoutes(app: FastifyInstance): Promise<void> {
     const row = getDb()
       .prepare(
         `SELECT count(*) AS photos, coalesce(sum(size), 0) AS bytes,
+                coalesce(sum(kind = ${KIND_VIDEO}), 0) AS videos,
                 min(taken_at) AS oldest, max(taken_at) AS newest
          FROM photos`,
       )
-      .get() as { photos: number; bytes: number; oldest: number | null; newest: number | null };
+      .get() as {
+      photos: number;
+      videos: number;
+      bytes: number;
+      oldest: number | null;
+      newest: number | null;
+    };
 
     const cache = await thumbCacheStats();
     const stats: StatsResult = {
       photos: row.photos,
+      videos: row.videos,
       totalBytes: row.bytes,
       thumbBytes: cache.bytes,
       thumbFiles: cache.files,

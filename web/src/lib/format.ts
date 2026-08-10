@@ -43,6 +43,22 @@ export function formatBytes(bytes: number): string {
   return `${value >= 100 || exp === 0 ? Math.round(value) : value.toFixed(1)} ${units[exp]}`;
 }
 
+/**
+ * `0:42`, `4:07`, `1:02:30` — the shape a video player uses, so the badge on a
+ * tile reads the same as the scrubber that appears when you open it.
+ */
+export function formatDuration(seconds: number): string {
+  if (!Number.isFinite(seconds) || seconds <= 0) return '';
+  const total = Math.round(seconds);
+  const hours = Math.floor(total / 3600);
+  const minutes = Math.floor((total % 3600) / 60);
+  const secs = total % 60;
+
+  return hours > 0
+    ? `${hours}:${String(minutes).padStart(2, '0')}:${String(secs).padStart(2, '0')}`
+    : `${minutes}:${String(secs).padStart(2, '0')}`;
+}
+
 export function formatDimensions(width: number | null, height: number | null): string {
   if (!width || !height) return '—';
   const megapixels = (width * height) / 1e6;

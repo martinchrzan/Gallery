@@ -3,6 +3,7 @@ import path from 'node:path';
 import process from 'node:process';
 import sharp from 'sharp';
 import { extractMetadata, type ExtractedMeta } from '../metadata.js';
+import { extractPoster } from '../video.js';
 
 export interface MetaJob {
   id: number;
@@ -20,6 +21,10 @@ export interface ThumbJob {
   /** Final cache path. The parent owns the naming; we just fill it in. */
   dest: string;
   size: number;
+  /** Render a poster frame through ffmpeg first, rather than reading pixels directly. */
+  video: boolean;
+  /** Runtime, when known — it decides how far in the poster frame is taken. */
+  durationMs: number | null;
 }
 
 export type WorkerRequest =
@@ -74,6 +79,7 @@ function failedResult(id: number, mtimeMs: number): MetaResult {
     focal: null,
     gpsLat: null,
     gpsLon: null,
+    durationMs: null,
     failed: true,
   };
 }
@@ -110,7 +116,15 @@ async function runMeta(jobs: MetaJob[]): Promise<MetaResult[]> {
 async function runThumb(job: ThumbJob): Promise<void> {
   await fsp.mkdir(path.dirname(job.dest), { recursive: true });
 
-  const buffer = await sharp(job.absPath, { failOn: 'none', animated: false })
+  // A video becomes a photo problem the moment ffmpeg hands us a frame: the
+  // resize, the format and the cache entry are then all the same as any tile's.
+  // ffmpeg applies the display matrix itself, so the JPEG arrives upright and
+  // carries no EXIF orientation for the `rotate()` below to act on.
+  const source: string | Buffer = job.video
+    ? await extractPoster(job.absPath, job.durationMs)
+    : job.absPath;
+
+  const buffer = await sharp(source, { failOn: 'none', animated: false })
     // `rotate()` with no argument applies the EXIF orientation and strips it,
     // so the browser never double-rotates.
     .rotate()

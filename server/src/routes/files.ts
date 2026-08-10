@@ -3,11 +3,11 @@ import fsp from 'node:fs/promises';
 import path from 'node:path';
 import archiver from 'archiver';
 import type { FastifyInstance } from 'fastify';
-import { getDb } from '../db.js';
+import { getDb, KIND_VIDEO } from '../db.js';
 import { requireAdmin } from '../guard.js';
 import {
   isIgnoredDir,
-  isSupportedImage,
+  isIndexableMedia,
   isUnsupportedImage,
   parentOf,
   PathError,
@@ -22,6 +22,7 @@ interface IndexedRow {
   name: string;
   width: number | null;
   height: number | null;
+  kind: number;
 }
 
 const collator = new Intl.Collator(undefined, { numeric: true, sensitivity: 'base' });
@@ -52,7 +53,7 @@ export async function filesRoutes(app: FastifyInstance): Promise<void> {
     // One indexed lookup for the whole directory instead of one per file.
     const indexed = new Map<string, IndexedRow>();
     for (const row of getDb()
-      .prepare('SELECT id, name, width, height FROM photos WHERE dir = ?')
+      .prepare('SELECT id, name, width, height, kind FROM photos WHERE dir = ?')
       .all(rel) as IndexedRow[]) {
       indexed.set(row.name, row);
     }
@@ -84,7 +85,8 @@ export async function filesRoutes(app: FastifyInstance): Promise<void> {
         photoId: row?.id ?? null,
         width: row?.width ?? null,
         height: row?.height ?? null,
-        unsupportedImage: !isSupportedImage(entry.name) && isUnsupportedImage(entry.name),
+        unsupportedImage: !isIndexableMedia(entry.name) && isUnsupportedImage(entry.name),
+        video: row?.kind === KIND_VIDEO,
       });
     }
 

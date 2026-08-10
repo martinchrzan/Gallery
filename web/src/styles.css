@@ -411,6 +411,28 @@ input[type='checkbox'] {
   font-size: 18px;
 }
 
+/* A poster frame looks exactly like a photo, so the badge is the only thing
+   telling you this tile plays. Sits above the hover overlay and never takes the
+   pointer — the whole tile is the click target. */
+.thumb-video {
+  position: absolute;
+  right: 6px;
+  bottom: 6px;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 6px;
+  border-radius: 4px;
+  background: rgba(12, 14, 18, 0.66);
+  color: #fff;
+  font-size: 11px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.5;
+  pointer-events: none;
+}
+
 /* --------------------------------------------------------------- gallery */
 
 .gallery {
@@ -758,6 +780,43 @@ input[type='checkbox'] {
 
 .lightbox-stage.panning {
   cursor: grabbing;
+}
+
+/* A player owns its own surface: centred rather than transformed, with the
+   grab cursor and the gesture capture that drive zoom and pan both dropped so
+   the native controls behave normally, touch included. */
+.lightbox-stage.video {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 8px;
+  touch-action: auto;
+  cursor: default;
+}
+
+.lightbox-video {
+  max-width: 100%;
+  max-height: 100%;
+  /* Without this the element keeps its intrinsic width in the flex row and a
+     portrait clip overflows the stage instead of shrinking to fit. */
+  min-width: 0;
+  outline: none;
+  background: #000;
+}
+
+.video-unplayable {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 14px;
+  color: rgba(255, 255, 255, 0.75);
+  font-size: 14px;
+  text-align: center;
+}
+
+.video-unplayable p {
+  margin: 0;
+  max-width: 34ch;
 }
 
 .lightbox-stage img {
@@ -1391,6 +1450,15 @@ input[type='checkbox'] {
      arrows are dead weight sitting on top of the photo. */
   .lightbox-nav {
     display: none;
+  }
+
+  /* Except over a video, which does not swipe — the player needs the pointer
+     for its own scrubber. Without the arrows there would be no way off a clip
+     but closing the viewer, so they come back, and visibly: there is no hover
+     on a touchscreen to reveal them. */
+  .lightbox-stage.video .lightbox-nav {
+    display: flex;
+    opacity: 1;
   }
 
   .year-rail {

@@ -17,6 +17,32 @@ export const SUPPORTED_EXTS = new Set([
 ]);
 
 /**
+ * Video containers that join the gallery feed.
+ *
+ * Wider than what a browser will actually play: the poster frame comes from
+ * ffmpeg, which reads all of these, so an `.avi` still gets a proper tile in the
+ * chronological feed and a download button. The lightbox says so plainly if the
+ * browser then refuses the stream itself.
+ */
+export const VIDEO_EXTS = new Set([
+  '.mp4',
+  '.m4v',
+  '.mov',
+  '.webm',
+  '.ogv',
+  '.3gp',
+  '.3g2',
+  '.mkv',
+  '.avi',
+  '.mpg',
+  '.mpeg',
+  '.mts',
+  '.m2ts',
+  '.wmv',
+  '.flv',
+]);
+
+/**
  * Image types we recognise but cannot thumbnail with the stock libvips build.
  * They show up in Files (downloadable, with a placeholder tile) but never in
  * the gallery feed.
@@ -42,6 +68,15 @@ export function isSupportedImage(name: string): boolean {
 
 export function isUnsupportedImage(name: string): boolean {
   return UNSUPPORTED_IMAGE_EXTS.has(path.extname(name).toLowerCase());
+}
+
+export function isSupportedVideo(name: string): boolean {
+  return VIDEO_EXTS.has(path.extname(name).toLowerCase());
+}
+
+/** Anything the scanner puts in the index — photos and videos alike. */
+export function isIndexableMedia(name: string): boolean {
+  return isSupportedImage(name) || isSupportedVideo(name);
 }
 
 export class PathError extends Error {

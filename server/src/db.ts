@@ -23,12 +23,24 @@ export interface PhotoRow {
   focal: number | null;
   gps_lat: number | null;
   gps_lon: number | null;
+  /** {@link KIND_IMAGE} or {@link KIND_VIDEO}, decided by extension at scan time. */
+  kind: number;
+  /** Runtime of a video in milliseconds; always null for a photo. */
+  duration_ms: number | null;
   content_key: string;
   meta_state: number;
   /** Extraction attempts so far. Lets a file that crashes the extractor be retired. */
   meta_attempts: number;
   seen_gen: number;
 }
+
+/**
+ * The `photos` table holds videos too — one chronological feed is the whole
+ * point, so splitting them into a second table would only mean merging it back
+ * on every query. `kind` is what the two differ by.
+ */
+export const KIND_IMAGE = 0;
+export const KIND_VIDEO = 1;
 
 export const META_PENDING = 0;
 export const META_DONE = 1;
@@ -119,6 +131,10 @@ function migrate(instance: Database.Database): void {
   `);
 
   addColumn(instance, 'photos', 'meta_attempts', 'INTEGER NOT NULL DEFAULT 0');
+  // Existing rows are all images, which is exactly what the default says. The
+  // next scan sets `kind` properly for anything new.
+  addColumn(instance, 'photos', 'kind', `INTEGER NOT NULL DEFAULT ${KIND_IMAGE}`);
+  addColumn(instance, 'photos', 'duration_ms', 'INTEGER');
 }
 
 /** `ALTER TABLE ... ADD COLUMN` is not idempotent in SQLite, so check first. */

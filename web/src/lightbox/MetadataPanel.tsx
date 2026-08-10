@@ -1,5 +1,5 @@
 import type { PhotoDetail } from '@shared';
-import { formatBytes, formatDateTime, formatDimensions } from '../lib/format';
+import { formatBytes, formatDateTime, formatDimensions, formatDuration } from '../lib/format';
 
 const TAKEN_SOURCE_LABEL: Record<string, string> = {
   exif: 'from EXIF',
@@ -39,6 +39,13 @@ export function MetadataPanel({ photo, loading }: MetadataPanelProps): React.Rea
     ['Dimensions', formatDimensions(photo.width, photo.height)],
     ['Size', formatBytes(photo.size)],
   ];
+
+  if (photo.kind === 'video') {
+    // Straight after Size, where a photo's camera row would start: the two
+    // facts that separate a clip from a still are that it is one, and how long.
+    rows.push(['Type', 'Video']);
+    if (photo.duration) rows.push(['Length', formatDuration(photo.duration / 1000)]);
+  }
 
   if (photo.camera) rows.push(['Camera', photo.camera]);
   if (photo.lens) rows.push(['Lens', photo.lens]);

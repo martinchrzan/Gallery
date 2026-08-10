@@ -40,6 +40,20 @@ export function thumbPath(contentKey: string, size: ThumbSize): string {
 }
 
 /**
+ * How a source becomes pixels. A video needs a poster frame pulled out of it
+ * first; everything downstream — the cache key, the WebP, the HTTP response —
+ * is then identical for both.
+ */
+export interface ThumbSource {
+  /** True when `absSource` is a video and the tile is a frame from it. */
+  video: boolean;
+  /** Runtime in ms, when known; picks which frame the poster comes from. */
+  durationMs: number | null;
+}
+
+const IMAGE_SOURCE: ThumbSource = { video: false, durationMs: null };
+
+/**
  * Returns the on-disk path of a cached thumbnail, rendering it on first sight.
  * Subsequent calls are a plain `stat` hit.
  */
@@ -47,6 +61,7 @@ export async function getThumb(
   absSource: string,
   contentKey: string,
   size: ThumbSize,
+  source: ThumbSource = IMAGE_SOURCE,
 ): Promise<string> {
   const dest = thumbPath(contentKey, size);
 
@@ -61,7 +76,7 @@ export async function getThumb(
   const existing = inFlight.get(cacheKey);
   if (existing) return existing;
 
-  const job = renderThumb(absSource, dest, size).finally(() => inFlight.delete(cacheKey));
+  const job = renderThumb(absSource, dest, size, source).finally(() => inFlight.delete(cacheKey));
   inFlight.set(cacheKey, job);
   return job;
 }
@@ -71,9 +86,14 @@ export async function getThumb(
  * libvips, so a file that aborts the decoder costs one worker, not the server.
  * The pool also bounds how many renders run at once.
  */
-async function renderThumb(absSource: string, dest: string, size: ThumbSize): Promise<string> {
+async function renderThumb(
+  absSource: string,
+  dest: string,
+  size: ThumbSize,
+  source: ThumbSource,
+): Promise<string> {
   try {
-    await getImagePool().renderThumb({ absPath: absSource, dest, size });
+    await getImagePool().renderThumb({ absPath: absSource, dest, size, ...source });
   } catch (err) {
     throw new ThumbError((err as Error).message, err instanceof WorkerCrashError);
   }

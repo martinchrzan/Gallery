@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   api,
+  isVideoAt,
   originalUrl,
   photoDownloadUrl,
   thumbUrl,
@@ -16,6 +17,7 @@ import {
   IconExpand,
   IconInfo,
   IconRotate,
+  IconVideo,
   IconZoom,
 } from '../components/icons';
 import { formatCount } from '../lib/format';
@@ -61,6 +63,8 @@ export function Lightbox({
   /** Quarter turns applied on screen only, in degrees. Nothing is written back
    *  to the file or the index, so it lasts as long as the photo is open. */
   const [rotation, setRotation] = useState(0);
+  /** Set when the browser refuses the video's codec or container. */
+  const [videoError, setVideoError] = useState(false);
 
   /** How far the photo has been dragged sideways by an in-flight swipe. */
   const [swipeDx, setSwipeDx] = useState(0);
@@ -80,6 +84,12 @@ export function Lightbox({
   const id = manifest.ids[index];
   const manifestWidth = manifest.widths[index] ?? 0;
   const manifestHeight = manifest.heights[index] ?? 0;
+  /**
+   * A video takes a different path through almost all of this: no zoom, no
+   * rotation, no full-resolution second fetch. The player owns its own surface,
+   * and the toolbar drops the controls that would have nothing to act on.
+   */
+  const isVideo = isVideoAt(manifest, index);
 
   const natural = useMemo(() => {
     if (manifestWidth > 0 && manifestHeight > 0) {
@@ -137,6 +147,7 @@ export function Lightbox({
     setWantOriginal(false);
     setMeasured(null);
     setRotation(0);
+    setVideoError(false);
   }, [id]);
 
   // Zooming past the fit means the preview is no longer sharp enough.
@@ -275,16 +286,23 @@ export function Lightbox({
     const onKeyDown = (event: KeyboardEvent): void => {
       if (event.metaKey || event.ctrlKey || event.altKey) return;
 
+      // With a player focused, the keys the browser already means something by
+      // are its own: arrows seek, space pauses. Stealing them to browse the
+      // library would make the controls under the cursor unusable.
+      const inPlayer = document.activeElement instanceof HTMLVideoElement;
+
       switch (event.key) {
         case 'Escape':
           event.preventDefault();
           onClose();
           break;
         case 'ArrowRight':
+          if (inPlayer) return;
           event.preventDefault();
           go(1);
           break;
         case 'ArrowLeft':
+          if (inPlayer) return;
           event.preventDefault();
           go(-1);
           break;
@@ -298,31 +316,38 @@ export function Lightbox({
           event.preventDefault();
           download();
           break;
+        // The rest act on the zoom-and-pan stage, which a video does not have.
         case 'r':
+          if (isVideo) return;
           event.preventDefault();
           rotate(90);
           break;
         case 'R':
+          if (isVideo) return;
           event.preventDefault();
           rotate(-90);
           break;
         case 'f':
         case 'F':
         case 'Enter':
+          if (isVideo) return;
           event.preventDefault();
           toggleZoom();
           break;
         case '0':
+          if (isVideo) return;
           event.preventDefault();
           reset();
           break;
         case '+':
         case '=':
+          if (isVideo) return;
           event.preventDefault();
           zoomBy(1.4);
           break;
         case '-':
         case '_':
+          if (isVideo) return;
           event.preventDefault();
           zoomBy(1 / 1.4);
           break;
@@ -331,7 +356,7 @@ export function Lightbox({
 
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, [download, go, onClose, reset, rotate, toggleZoom, zoomBy]);
+  }, [download, go, isVideo, onClose, reset, rotate, toggleZoom, zoomBy]);
 
   useCloseOnBack(onClose);
 
@@ -373,6 +398,91 @@ export function Lightbox({
   // at actual size, because fit never enlarges.
   const atActualSize = Math.abs(view.scale - 1) < 0.005;
 
+  /**
+   * Zoom, pan and swipe, as one bundle that a video simply does not get: its
+   * own controls need the pointer, and a drag across the scrubber must not be
+   * read as "next photo".
+   */
+  const stageInteraction: React.HTMLAttributes<HTMLDivElement> = {
+    onDoubleClick: (event) => {
+      const rect = event.currentTarget.getBoundingClientRect();
+      toggleZoom(event.clientX - rect.left, event.clientY - rect.top);
+    },
+    ...handlers,
+    onPointerDown: (event) => {
+      press.current = { x: event.clientX, y: event.clientY, moved: false };
+
+      touches.current += 1;
+      if (touches.current > 1) endSwipe(false);
+      else if (canSwipe(event)) {
+        setSettling(false);
+        swipe.current = { x: event.clientX, y: event.clientY, dx: 0, axis: null };
+      }
+
+      handlers.onPointerDown(event);
+    },
+    onPointerMove: (event) => {
+      const start = press.current;
+      if (start && (Math.abs(event.clientX - start.x) > 4 || Math.abs(event.clientY - start.y) > 4)) {
+        start.moved = true;
+      }
+
+      const gesture = swipe.current;
+      if (gesture) {
+        const dx = event.clientX - gesture.x;
+        const dy = event.clientY - gesture.y;
+        // Locking the axis once, on the first real movement, stops a
+        // wobbly finger from flip-flopping mid-drag.
+        if (gesture.axis === null && Math.hypot(dx, dy) > SWIPE_LOCK) {
+          gesture.axis = Math.abs(dx) > Math.abs(dy) ? 'x' : 'y';
+        }
+        if (gesture.axis === 'x') {
+          gesture.dx = dx;
+          setSwipeDx(dx);
+          // Withheld from the pan handler, which would fight it.
+          return;
+        }
+      }
+
+      handlers.onPointerMove(event);
+    },
+    onPointerUp: (event) => {
+      touches.current = Math.max(0, touches.current - 1);
+      endSwipe(true);
+      handlers.onPointerUp(event);
+    },
+    onPointerCancel: (event) => {
+      touches.current = Math.max(0, touches.current - 1);
+      endSwipe(false);
+      handlers.onPointerUp(event);
+    },
+  };
+
+  const navButtons = manifest.count > 1 && (
+    <>
+      <button
+        className="lightbox-nav prev"
+        onClick={(event) => {
+          event.stopPropagation();
+          go(-1);
+        }}
+        aria-label="Previous photo"
+      >
+        <IconChevronLeft size={22} />
+      </button>
+      <button
+        className="lightbox-nav next"
+        onClick={(event) => {
+          event.stopPropagation();
+          go(1);
+        }}
+        aria-label="Next photo"
+      >
+        <IconChevronRight size={22} />
+      </button>
+    </>
+  );
+
   return (
     <div className="lightbox" role="dialog" aria-modal="true">
       <div className="lightbox-bar">
@@ -385,60 +495,68 @@ export function Lightbox({
         </div>
         <div className="topbar-spacer" />
 
-        <div className="zoom-slider" title="Drag to zoom">
-          <IconZoom size={14} className="zoom-slider-icon" />
-          <input
-            ref={sliderRef}
-            type="range"
-            min={0}
-            max={1000}
-            step={1}
-            defaultValue={0}
-            onChange={(event) => zoomTo(sliderToScale(Number(event.target.value) / 1000, view.fitScale))}
-            aria-label="Zoom"
-          />
-          <span className="zoom-slider-value">{zoomPercent}%</span>
-        </div>
+        {/* Zoom and rotation belong to the still-image stage. A video keeps the
+            three controls that still mean something: details, download, close. */}
+        {!isVideo && (
+          <>
+            <div className="zoom-slider" title="Drag to zoom">
+              <IconZoom size={14} className="zoom-slider-icon" />
+              <input
+                ref={sliderRef}
+                type="range"
+                min={0}
+                max={1000}
+                step={1}
+                defaultValue={0}
+                onChange={(event) =>
+                  zoomTo(sliderToScale(Number(event.target.value) / 1000, view.fitScale))
+                }
+                aria-label="Zoom"
+              />
+              <span className="zoom-slider-value">{zoomPercent}%</span>
+            </div>
 
-        {/* A mode indicator, not an action button. The old single button was
-            labelled with its *destination*, so a small photo sitting correctly
-            at fit still read "100%" and looked like it had opened zoomed in.
-            When a photo is smaller than the screen, fit and 1:1 are the same
-            thing and both light up — which says exactly that. */}
-        <div className="zoom-modes" role="group" aria-label="Zoom mode">
-          <button
-            className={`zoom-mode${atFit ? ' active' : ''}`}
-            onClick={() => reset()}
-            title="Fit to screen (F)"
-            aria-label="Fit to screen"
-            aria-pressed={atFit}
-          >
-            <IconCollapse size={13} />
-            <span className="btn-label">Fit</span>
-          </button>
-          <button
-            className={`zoom-mode${atActualSize ? ' active' : ''}`}
-            onClick={() => zoomTo(1)}
-            title="Actual size, 1:1"
-            aria-label="Actual size"
-            aria-pressed={atActualSize}
-          >
-            <IconExpand size={13} />
-            <span className="btn-label">1:1</span>
-          </button>
-        </div>
-        {/* Shift-click turns the other way, matching the shortcut. The label
-            says "Rotate" rather than naming a direction, because the button
-            does both. */}
-        <button
-          className={`btn${rotation === 0 ? '' : ' btn-on'}`}
-          onClick={(event) => rotate(event.shiftKey ? -90 : 90)}
-          title="Rotate (R, shift for anticlockwise)"
-          aria-label="Rotate"
-        >
-          <IconRotate />
-          <span className="btn-label">Rotate</span>
-        </button>
+            {/* A mode indicator, not an action button. The old single button was
+                labelled with its *destination*, so a small photo sitting correctly
+                at fit still read "100%" and looked like it had opened zoomed in.
+                When a photo is smaller than the screen, fit and 1:1 are the same
+                thing and both light up — which says exactly that. */}
+            <div className="zoom-modes" role="group" aria-label="Zoom mode">
+              <button
+                className={`zoom-mode${atFit ? ' active' : ''}`}
+                onClick={() => reset()}
+                title="Fit to screen (F)"
+                aria-label="Fit to screen"
+                aria-pressed={atFit}
+              >
+                <IconCollapse size={13} />
+                <span className="btn-label">Fit</span>
+              </button>
+              <button
+                className={`zoom-mode${atActualSize ? ' active' : ''}`}
+                onClick={() => zoomTo(1)}
+                title="Actual size, 1:1"
+                aria-label="Actual size"
+                aria-pressed={atActualSize}
+              >
+                <IconExpand size={13} />
+                <span className="btn-label">1:1</span>
+              </button>
+            </div>
+            {/* Shift-click turns the other way, matching the shortcut. The label
+                says "Rotate" rather than naming a direction, because the button
+                does both. */}
+            <button
+              className={`btn${rotation === 0 ? '' : ' btn-on'}`}
+              onClick={(event) => rotate(event.shiftKey ? -90 : 90)}
+              title="Rotate (R, shift for anticlockwise)"
+              aria-label="Rotate"
+            >
+              <IconRotate />
+              <span className="btn-label">Rotate</span>
+            </button>
+          </>
+        )}
         <button
           className={`btn${showMeta ? ' btn-on' : ''}`}
           onClick={() => setShowMeta((value) => !value)}
@@ -463,151 +581,117 @@ export function Lightbox({
       <div className="lightbox-body">
         <div
           ref={stageRef}
-          className={`lightbox-stage${view.zoomed ? ' zoomed' : ''}${view.panning ? ' panning' : ''}${settling ? ' settling' : ''}`}
-          onDoubleClick={(event) => {
-            const rect = event.currentTarget.getBoundingClientRect();
-            toggleZoom(event.clientX - rect.left, event.clientY - rect.top);
-          }}
-          {...handlers}
-          onPointerDown={(event) => {
-            press.current = { x: event.clientX, y: event.clientY, moved: false };
-
-            touches.current += 1;
-            if (touches.current > 1) endSwipe(false);
-            else if (canSwipe(event)) {
-              setSettling(false);
-              swipe.current = { x: event.clientX, y: event.clientY, dx: 0, axis: null };
-            }
-
-            handlers.onPointerDown(event);
-          }}
-          onPointerMove={(event) => {
-            const start = press.current;
-            if (start && (Math.abs(event.clientX - start.x) > 4 || Math.abs(event.clientY - start.y) > 4)) {
-              start.moved = true;
-            }
-
-            const gesture = swipe.current;
-            if (gesture) {
-              const dx = event.clientX - gesture.x;
-              const dy = event.clientY - gesture.y;
-              // Locking the axis once, on the first real movement, stops a
-              // wobbly finger from flip-flopping mid-drag.
-              if (gesture.axis === null && Math.hypot(dx, dy) > SWIPE_LOCK) {
-                gesture.axis = Math.abs(dx) > Math.abs(dy) ? 'x' : 'y';
-              }
-              if (gesture.axis === 'x') {
-                gesture.dx = dx;
-                setSwipeDx(dx);
-                // Withheld from the pan handler, which would fight it.
-                return;
-              }
-            }
-
-            handlers.onPointerMove(event);
-          }}
-          onPointerUp={(event) => {
-            touches.current = Math.max(0, touches.current - 1);
-            endSwipe(true);
-            handlers.onPointerUp(event);
-          }}
-          onPointerCancel={(event) => {
-            touches.current = Math.max(0, touches.current - 1);
-            endSwipe(false);
-            handlers.onPointerUp(event);
-          }}
+          className={
+            isVideo
+              ? 'lightbox-stage video'
+              : `lightbox-stage${view.zoomed ? ' zoomed' : ''}${view.panning ? ' panning' : ''}${settling ? ' settling' : ''}`
+          }
+          {...(isVideo ? {} : stageInteraction)}
           onClick={(event) => {
             // Only the bare backdrop closes: a click that landed on the photo,
             // an arrow or anything else bubbles up with a different target.
             if (event.target !== event.currentTarget) return;
-            if (press.current?.moved) return;
+            // A video never sets `press`, so what is in there is left over from
+            // the last photo — and a drag on that one must not go on blocking
+            // clicks here.
+            if (!isVideo && press.current?.moved) return;
             onClose();
           }}
         >
-          {!previewLoaded && <div className="loading-bar" />}
-
-          {/* The neighbours ride along under the finger, so a swipe reads as
-              travelling through the library rather than dragging one photo off
-              into the void. They are drawn before the current photo so it stays
-              on top, and only exist for the duration of the gesture. */}
-          {(swipeDx !== 0 || settling) && manifest.count > 1 && (
+          {isVideo ? (
+            videoError ? (
+              // The file is fine — the browser just has no decoder for it. Say
+              // that, rather than leaving a black rectangle, and offer the way
+              // out that does work.
+              <div className="video-unplayable">
+                <IconVideo size={34} />
+                <p>This browser cannot play this video.</p>
+                <button className="btn btn-primary" onClick={download}>
+                  <IconDownload />
+                  <span>Download it</span>
+                </button>
+              </div>
+            ) : (
+              <video
+                key={`video-${id}`}
+                className="lightbox-video"
+                src={originalUrl(id)}
+                // The 1600px poster is the same frame the grid tile showed, and
+                // is usually already cached — so the first paint is instant
+                // instead of a black box while the stream opens.
+                poster={thumbUrl(id, 1600)}
+                controls
+                autoPlay
+                playsInline
+                preload="metadata"
+                onError={() => setVideoError(true)}
+              />
+            )
+          ) : (
             <>
+              {!previewLoaded && <div className="loading-bar" />}
+
+              {/* The neighbours ride along under the finger, so a swipe reads as
+                  travelling through the library rather than dragging one photo off
+                  into the void. They are drawn before the current photo so it stays
+                  on top, and only exist for the duration of the gesture. */}
+              {(swipeDx !== 0 || settling) && manifest.count > 1 && (
+                <>
+                  <img
+                    className="swipe-peek"
+                    src={thumbUrl(manifest.ids[(index - 1 + manifest.count) % manifest.count]!, 1600)}
+                    alt=""
+                    draggable={false}
+                    style={{ transform: `translate3d(${swipeDx - stage.width - SWIPE_GAP}px, 0, 0)` }}
+                  />
+                  <img
+                    className="swipe-peek"
+                    src={thumbUrl(manifest.ids[(index + 1) % manifest.count]!, 1600)}
+                    alt=""
+                    draggable={false}
+                    style={{ transform: `translate3d(${swipeDx + stage.width + SWIPE_GAP}px, 0, 0)` }}
+                  />
+                </>
+              )}
+
+              {/* The 1600px preview appears immediately — it is usually already
+                  cached from the grid's own thumbnail pipeline. */}
               <img
-                className="swipe-peek"
-                src={thumbUrl(manifest.ids[(index - 1 + manifest.count) % manifest.count]!, 1600)}
+                key={`preview-${id}`}
+                src={thumbUrl(id, 1600)}
                 alt=""
+                style={{ ...imageStyle, visibility: previewLoaded ? 'visible' : 'hidden' }}
                 draggable={false}
-                style={{ transform: `translate3d(${swipeDx - stage.width - SWIPE_GAP}px, 0, 0)` }}
+                onLoad={(event) => {
+                  setPreviewLoaded(true);
+                  if (manifestWidth === 0 || manifestHeight === 0) {
+                    const image = event.currentTarget;
+                    setMeasured({ width: image.naturalWidth, height: image.naturalHeight });
+                  }
+                }}
               />
-              <img
-                className="swipe-peek"
-                src={thumbUrl(manifest.ids[(index + 1) % manifest.count]!, 1600)}
-                alt=""
-                draggable={false}
-                style={{ transform: `translate3d(${swipeDx + stage.width + SWIPE_GAP}px, 0, 0)` }}
-              />
+
+              {/* Full resolution is fetched only once it can actually be seen. */}
+              {wantOriginal && (
+                <img
+                  key={`original-${id}`}
+                  src={originalUrl(id)}
+                  alt=""
+                  style={{ ...imageStyle, visibility: originalLoaded ? 'visible' : 'hidden' }}
+                  draggable={false}
+                  onLoad={() => setOriginalLoaded(true)}
+                />
+              )}
+
+              {view.zoomed && (
+                <div className="zoom-badge">
+                  {zoomPercent}%{wantOriginal && !originalLoaded ? ' · loading full size…' : ''}
+                </div>
+              )}
             </>
           )}
 
-          {/* The 1600px preview appears immediately — it is usually already
-              cached from the grid's own thumbnail pipeline. */}
-          <img
-            key={`preview-${id}`}
-            src={thumbUrl(id, 1600)}
-            alt=""
-            style={{ ...imageStyle, visibility: previewLoaded ? 'visible' : 'hidden' }}
-            draggable={false}
-            onLoad={(event) => {
-              setPreviewLoaded(true);
-              if (manifestWidth === 0 || manifestHeight === 0) {
-                const image = event.currentTarget;
-                setMeasured({ width: image.naturalWidth, height: image.naturalHeight });
-              }
-            }}
-          />
-
-          {/* Full resolution is fetched only once it can actually be seen. */}
-          {wantOriginal && (
-            <img
-              key={`original-${id}`}
-              src={originalUrl(id)}
-              alt=""
-              style={{ ...imageStyle, visibility: originalLoaded ? 'visible' : 'hidden' }}
-              draggable={false}
-              onLoad={() => setOriginalLoaded(true)}
-            />
-          )}
-
-          {manifest.count > 1 && (
-            <>
-              <button
-                className="lightbox-nav prev"
-                onClick={(event) => {
-                  event.stopPropagation();
-                  go(-1);
-                }}
-                aria-label="Previous photo"
-              >
-                <IconChevronLeft size={22} />
-              </button>
-              <button
-                className="lightbox-nav next"
-                onClick={(event) => {
-                  event.stopPropagation();
-                  go(1);
-                }}
-                aria-label="Next photo"
-              >
-                <IconChevronRight size={22} />
-              </button>
-            </>
-          )}
-
-          {view.zoomed && (
-            <div className="zoom-badge">
-              {zoomPercent}%{wantOriginal && !originalLoaded ? ' · loading full size…' : ''}
-            </div>
-          )}
+          {navButtons}
         </div>
 
         {showMeta && <MetadataPanel photo={detail} loading={detailLoading} />}

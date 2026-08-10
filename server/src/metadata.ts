@@ -1,5 +1,7 @@
 import exifr from 'exifr';
 import sharp from 'sharp';
+import { isSupportedVideo } from './paths.js';
+import { probeVideo, toolPath } from './video.js';
 
 export interface ExtractedMeta {
   width: number | null;
@@ -15,6 +17,8 @@ export interface ExtractedMeta {
   focal: number | null;
   gpsLat: number | null;
   gpsLon: number | null;
+  /** Runtime of a video in milliseconds; null for photos and unprobed videos. */
+  durationMs: number | null;
   failed: boolean;
 }
 
@@ -107,17 +111,8 @@ function formatExposure(value: unknown): string | null {
   return n >= 1 ? `${Number(n.toFixed(1))}s` : `1/${Math.round(1 / n)}`;
 }
 
-/**
- * Reads dimensions and EXIF for one image. Never throws: a file that cannot be
- * parsed comes back with `failed: true` and whatever could be salvaged, so a
- * single bad photo never stalls a scan.
- */
-export async function extractMetadata(
-  absPath: string,
-  fileName: string,
-  mtimeMs: number,
-): Promise<ExtractedMeta> {
-  const result: ExtractedMeta = {
+function emptyMeta(): ExtractedMeta {
+  return {
     width: null,
     height: null,
     orientation: null,
@@ -131,8 +126,84 @@ export async function extractMetadata(
     focal: null,
     gpsLat: null,
     gpsLon: null,
+    durationMs: null,
     failed: false,
   };
+}
+
+/**
+ * The date chain every media type shares: whatever the file itself said, then
+ * the filename (`IMG_20190704_…`, `VID_20190704_…`), then its mtime.
+ */
+function fillTakenAt(result: ExtractedMeta, fileName: string, mtimeMs: number): void {
+  if (result.takenAt !== null) return;
+
+  const fromName = dateFromFilename(fileName);
+  if (fromName !== null) {
+    result.takenAt = fromName;
+    result.takenSrc = 'filename';
+  } else {
+    result.takenAt = mtimeMs;
+    result.takenSrc = 'mtime';
+  }
+}
+
+/**
+ * Reads dimensions, duration and capture date for one file, photo or video.
+ * Never throws: a file that cannot be parsed comes back with `failed: true` and
+ * whatever could be salvaged, so a single bad file never stalls a scan.
+ */
+export async function extractMetadata(
+  absPath: string,
+  fileName: string,
+  mtimeMs: number,
+): Promise<ExtractedMeta> {
+  return isSupportedVideo(fileName)
+    ? extractVideoMetadata(absPath, fileName, mtimeMs)
+    : extractImageMetadata(absPath, fileName, mtimeMs);
+}
+
+/**
+ * Videos have no EXIF block. What a camera records lives in container tags
+ * instead, which is ffprobe's job — and ffprobe is optional, so a missing tool
+ * has to look different from a broken file: only the second is `failed`, since
+ * only the second is worth remembering against the file.
+ */
+async function extractVideoMetadata(
+  absPath: string,
+  fileName: string,
+  mtimeMs: number,
+): Promise<ExtractedMeta> {
+  const result = emptyMeta();
+
+  if (await toolPath('ffprobe')) {
+    const probe = await probeVideo(absPath);
+    if (probe) {
+      result.width = probe.width;
+      result.height = probe.height;
+      result.durationMs = probe.durationMs;
+      result.camera = probe.camera;
+      result.gpsLat = probe.gpsLat;
+      result.gpsLon = probe.gpsLon;
+      if (probe.takenAt !== null) {
+        result.takenAt = probe.takenAt;
+        result.takenSrc = 'exif';
+      }
+    } else {
+      result.failed = true;
+    }
+  }
+
+  fillTakenAt(result, fileName, mtimeMs);
+  return result;
+}
+
+async function extractImageMetadata(
+  absPath: string,
+  fileName: string,
+  mtimeMs: number,
+): Promise<ExtractedMeta> {
+  const result = emptyMeta();
 
   let dimensionsOk = false;
   try {
@@ -189,16 +260,6 @@ export async function extractMetadata(
     // No EXIF block, or an unreadable one. Fall through to the other sources.
   }
 
-  if (result.takenAt === null) {
-    const fromName = dateFromFilename(fileName);
-    if (fromName !== null) {
-      result.takenAt = fromName;
-      result.takenSrc = 'filename';
-    } else {
-      result.takenAt = mtimeMs;
-      result.takenSrc = 'mtime';
-    }
-  }
-
+  fillTakenAt(result, fileName, mtimeMs);
   return result;
 }

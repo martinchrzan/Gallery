@@ -3,9 +3,9 @@
 A self-hosted photo gallery for a folder of photos on your own machine. No cloud, no external
 services, no database server — just Node, SQLite and a folder of pictures.
 
-- **Gallery** — every photo from the folders you choose, in one chronological feed, sorted by the
-  date the photo was taken. Day separators, a year scrubber down the side, and a full-screen viewer
-  with zoom.
+- **Gallery** — every photo and video from the folders you choose, in one chronological feed,
+  sorted by the date it was taken. Day separators, a year scrubber down the side, and a full-screen
+  viewer with zoom.
 - **Files** — the raw folder tree, browsable to any depth, with single-file and ZIP downloads.
 - **Sharing** — hand someone an access code and they get the gallery for the folders you picked,
   and nothing else.
@@ -43,9 +43,11 @@ GALLERY_ADMIN_CODE=my-new-code npm start
 | `host` | Bind address. `0.0.0.0` exposes it to your LAN. | `0.0.0.0` |
 | `dataDir` | Where the index and thumbnail cache live. | `./data` |
 | `trustProxy` | Honour `X-Forwarded-*`. Turn this on behind a tunnel or reverse proxy. | `false` |
+| `ffmpegPath` | Explicit ffmpeg binary, for video thumbnails. | bundled, else `PATH` |
+| `ffprobePath` | Explicit ffprobe binary, for video metadata. | bundled, else `PATH` |
 
-Any of these can be overridden by the `PHOTOS_ROOT`, `PORT`, `HOST`, `DATA_DIR` and `TRUST_PROXY`
-environment variables, which is handy when running as a service. Everything else — which folders
+Any of these can be overridden by the `PHOTOS_ROOT`, `PORT`, `HOST`, `DATA_DIR`, `TRUST_PROXY`,
+`FFMPEG_PATH` and `FFPROBE_PATH` environment variables, which is handy when running as a service. Everything else — which folders
 feed the gallery, who can see it, how often it re-indexes, row height — is configured in the app's
 Settings page and stored server-side, so it follows you between browsers.
 
@@ -143,7 +145,9 @@ not `403`, for anything outside it: whether that id exists is itself not their b
 
 ## Keyboard shortcuts
 
-In the full-screen viewer:
+In the full-screen viewer. Everything below `I` acts on a still image, so a video ignores them and
+keeps the keys for its own player instead — with the video focused, `←` `→` seek rather than
+browse:
 
 | Key | Action |
 | --- | --- |
@@ -170,25 +174,29 @@ Double-click or pinch to zoom, drag to pan.
 
 ## How it works
 
-**The index.** A background scan walks `photosRoot` and records every image in a SQLite database
-(`data/gallery.db`). A pool of worker threads then reads each photo's EXIF for the capture date,
-dimensions and camera settings, so the HTTP server stays responsive while a large library is being
-indexed. Photos with no EXIF date fall back to a date parsed from the filename (`IMG_20190704_...`),
-then to the file's modification time.
+**The index.** A background scan walks `photosRoot` and records every image and video in a SQLite
+database (`data/gallery.db`). A pool of worker threads then reads each photo's EXIF for the capture
+date, dimensions and camera settings — or, for a video, asks ffprobe the same questions — so the
+HTTP server stays responsive while a large library is being indexed. Files with no embedded date
+fall back to a date parsed from the filename (`IMG_20190704_...`), then to the file's modification
+time.
 
 **Staying in sync.** Settings offers three modes: watch the folder live via filesystem events,
 re-scan on a timer (1–24 hours), or scan only on startup and on demand. A *Rescan now* button is
 always available.
 
-**The feed.** The client fetches the whole feed as a packed binary manifest — 12 bytes per photo
-(id, timestamp, width, height) instead of ~45 for JSON. 50 000 photos is 600 KB and decodes straight
-into typed arrays with no parse step. That lets the client compute the exact total scroll height up
+**The feed.** The client fetches the whole feed as a packed binary manifest — 16 bytes per item
+(id, timestamp, width, height, duration, flags) instead of ~55 for JSON. 50 000 photos is 800 KB and
+decodes straight into typed arrays with no parse step. That lets the client compute the exact total scroll height up
 front, so the scrollbar is honest and jumping to 2014 is instant. Layout is justified rows grouped
 by day, recomputed in ~8 ms for a 50 000-photo library, and only the rows near the viewport are
 mounted.
 
 **Thumbnails.** Generated with libvips the first time a photo is seen and cached on disk as WebP
-(`data/thumbs/`), keyed by a hash of the file's path, size and modification time. Because the key
+(`data/thumbs/`), keyed by a hash of the file's path, size and modification time. A video takes one
+extra step first — ffmpeg pulls a frame from a tenth of the way in, capped at three seconds, since
+the opening frames of a clip are so often black — and from there it is the same pipeline, the same
+cache and the same three sizes as any photo. Because the key
 covers the file's contents, thumbnails are served `immutable` and an edited photo automatically gets
 a fresh URL. They are also `private` rather than `public`, since which photos you may fetch now
 depends on who you are. Three sizes exist: 320 px for the grid, 640 px for HiDPI screens, and 1600 px for the
@@ -209,6 +217,33 @@ id-addressed routes that check their scope.
 JPEG, PNG, WebP, AVIF, GIF and TIFF appear in the gallery. HEIC/HEIF and camera RAW files are listed
 in **Files** and can be downloaded, but are not thumbnailed or shown in the feed — the stock libvips
 build cannot decode them.
+
+### Videos
+
+MP4, M4V, MOV, WebM, MKV, AVI, 3GP, MPEG, MTS/M2TS, WMV, FLV and OGV sit in the same chronological
+feed as the photos, with a play badge and their runtime on the tile. Clicking one opens the
+full-screen viewer and plays it. Zoom, pan and rotate are a still-image affair and are hidden for a
+video; the player's own controls take their place, and on a phone the previous/next arrows come back
+because a swipe there belongs to the scrubber.
+
+Capture dates come from the container's own tags (`creation_time`, and Apple's
+`com.apple.quicktime.creationdate`, which carries a timezone), so a clip lands on the day it was
+shot, next to the photos from the same afternoon. Failing that it falls back to the filename and
+then the file date, exactly as a photo does. A file that says it should be displayed rotated is
+reported — and thumbnailed — the right way up.
+
+**This needs ffmpeg.** `npm install` fetches a prebuilt ffmpeg and ffprobe as *optional*
+dependencies, so normally there is nothing to do. If that is skipped (`--no-optional`, an offline
+install, an unsupported platform), the server falls back to whatever is on the `PATH`, and then to
+nothing at all — it says which at startup. Without ffmpeg videos are still indexed, still ordered,
+and still play in the browser; what they lose is their poster tiles, dimensions, durations and
+container dates. Install it later and the next scan fills all of that in: the videos are re-read
+automatically.
+
+Thumbnailing a video is not the same as playing it. The poster frame is ffmpeg's work and exists for
+every format above, but the stream itself goes to the browser untouched — so an AVI or a WMV gets a
+proper tile in the feed and then tells you plainly that your browser cannot play it, with a download
+button. MP4/H.264 plays everywhere.
 
 ## Layout
 

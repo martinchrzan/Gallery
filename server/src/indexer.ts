@@ -8,6 +8,8 @@ import {
   getDb,
   getMeta,
   getSettings,
+  KIND_IMAGE,
+  KIND_VIDEO,
   META_DONE,
   META_FAILED,
   META_INFLIGHT,
@@ -17,13 +19,15 @@ import {
 import {
   absFromRel,
   isIgnoredDir,
-  isSupportedImage,
+  isIndexableMedia,
+  isSupportedVideo,
   isUnsupportedImage,
   relFromAbs,
   toRelPosix,
 } from './paths.js';
 import { deleteThumbs, getThumb, hasThumb, ThumbError } from './thumbs.js';
 import type { IndexStatus } from './types.js';
+import { toolPath } from './video.js';
 import { destroyImagePool, getImagePool } from './workers/pool.js';
 import type { MetaJob, MetaResult } from './workers/image-worker.js';
 
@@ -115,6 +119,7 @@ interface MetaUpdate {
   focal: number | null;
   gps_lat: number | null;
   gps_lon: number | null;
+  duration_ms: number | null;
   meta_state: number;
 }
 
@@ -122,12 +127,13 @@ function buildStatements() {
   const db = getDb();
   return {
     upsert: db.prepare<[WalkRow]>(`
-      INSERT INTO photos (rel_path, dir, name, ext, size, mtime_ms, content_key,
+      INSERT INTO photos (rel_path, dir, name, ext, kind, size, mtime_ms, content_key,
                           taken_at, taken_src, meta_state, seen_gen)
-      VALUES (@rel_path, @dir, @name, @ext, @size, @mtime_ms, @content_key,
+      VALUES (@rel_path, @dir, @name, @ext, @kind, @size, @mtime_ms, @content_key,
               @mtime_ms, 'mtime', ${META_PENDING}, @gen)
       ON CONFLICT(rel_path) DO UPDATE SET
         seen_gen    = @gen,
+        kind        = @kind,
         size        = @size,
         mtime_ms    = @mtime_ms,
         content_key = @content_key,
@@ -151,6 +157,10 @@ function buildStatements() {
     >(
       `SELECT id, rel_path, name, mtime_ms FROM photos WHERE meta_state = ${META_PENDING} LIMIT ?`,
     ),
+    prewarmRows: db.prepare<[], { id: number; rel_path: string; content_key: string; kind: number; duration_ms: number | null }>(
+      `SELECT id, rel_path, content_key, kind, duration_ms FROM photos
+       WHERE meta_state <> ${META_FAILED} ORDER BY taken_at DESC`,
+    ),
     pendingCount: db.prepare<[], { n: number }>(
       `SELECT count(*) AS n FROM photos WHERE meta_state = ${META_PENDING}`,
     ),
@@ -161,6 +171,7 @@ function buildStatements() {
         camera = @camera, lens = @lens, iso = @iso, fnum = @fnum,
         exposure = @exposure, focal = @focal,
         gps_lat = @gps_lat, gps_lon = @gps_lon,
+        duration_ms = @duration_ms,
         meta_state = @meta_state
       WHERE id = @id
     `),
@@ -185,6 +196,16 @@ function buildStatements() {
        WHERE meta_state = ${META_INFLIGHT}`,
     ),
     failOne: db.prepare<[number]>(`UPDATE photos SET meta_state = ${META_FAILED} WHERE id = ?`),
+    /**
+     * Videos indexed while ffprobe was missing. They were recorded as done —
+     * an absent tool says nothing about the file — but done with no dimensions,
+     * no duration and a fallback date, which is exactly the state a newly
+     * installed ffprobe can fix.
+     */
+    unprobedVideos: db.prepare<[]>(
+      `UPDATE photos SET meta_state = ${META_PENDING}, meta_attempts = 0
+       WHERE kind = ${KIND_VIDEO} AND meta_state = ${META_DONE} AND width IS NULL`,
+    ),
   };
 }
 
@@ -203,15 +224,20 @@ interface WalkRow {
   dir: string;
   name: string;
   ext: string;
+  kind: number;
   size: number;
   mtime_ms: number;
   content_key: string;
   gen: number;
 }
 
+function kindOf(name: string): number {
+  return isSupportedVideo(name) ? KIND_VIDEO : KIND_IMAGE;
+}
+
 /**
- * Recursively lists supported images under `root`, flushing to SQLite in
- * batched transactions so memory stays flat on huge libraries.
+ * Recursively lists supported photos and videos under `root`, flushing to
+ * SQLite in batched transactions so memory stays flat on huge libraries.
  */
 async function walk(gen: number): Promise<void> {
   const db = getDb();
@@ -242,7 +268,7 @@ async function walk(gen: number): Promise<void> {
       // Skip symlinks entirely: following them invites cycles and lets content
       // outside the root be indexed.
       if (!entry.isFile()) continue;
-      if (!isSupportedImage(entry.name)) continue;
+      if (!isIndexableMedia(entry.name)) continue;
 
       let stat;
       try {
@@ -257,6 +283,7 @@ async function walk(gen: number): Promise<void> {
         dir: toRelPosix(path.dirname(rel) === '.' ? '' : path.dirname(rel)),
         name: entry.name,
         ext: path.extname(entry.name).toLowerCase(),
+        kind: kindOf(entry.name),
         size: stat.size,
         mtime_ms: Math.round(stat.mtimeMs),
         content_key: contentKey(rel, stat.size, stat.mtimeMs),
@@ -338,6 +365,7 @@ async function extractPending(): Promise<void> {
         focal: r.focal,
         gps_lat: r.gpsLat,
         gps_lon: r.gpsLon,
+        duration_ms: r.durationMs,
         // A file that failed to decode is marked done-with-failure so the next
         // scan does not retry it forever.
         meta_state: r.failed ? META_FAILED : META_DONE,
@@ -440,13 +468,7 @@ async function extractPending(): Promise<void> {
 /* -------------------------------------------------------------- pre-warm -- */
 
 async function prewarm(signal: { cancelled: boolean }): Promise<void> {
-  const db = getDb();
-  const rows = db
-    .prepare(
-      `SELECT id, rel_path, content_key FROM photos
-       WHERE meta_state <> ${META_FAILED} ORDER BY taken_at DESC`,
-    )
-    .all() as { id: number; rel_path: string; content_key: string }[];
+  const rows = statements().prewarmRows.all();
 
   status.phase = 'prewarming';
   status.total = rows.length;
@@ -461,7 +483,10 @@ async function prewarm(signal: { cancelled: boolean }): Promise<void> {
       const row = rows[cursor++];
       if (!row) return;
       if (!(await hasThumb(row.content_key, 320))) {
-        await getThumb(absFromRel(row.rel_path), row.content_key, 320).catch((err: unknown) => {
+        await getThumb(absFromRel(row.rel_path), row.content_key, 320, {
+          video: row.kind === KIND_VIDEO,
+          durationMs: row.duration_ms,
+        }).catch((err: unknown) => {
           // A file that kills the renderer is retired here rather than waiting
           // for someone to scroll past it in the gallery.
           if (err instanceof ThumbError && err.fatal) {
@@ -518,6 +543,15 @@ export function scan(): Promise<void> {
       }
       bumpDataVersion();
 
+      // Queued before the extraction pass rather than after, so installing
+      // ffmpeg and restarting is all it takes to fill in what was missing.
+      if (await toolPath('ffprobe')) {
+        const repaired = statements().unprobedVideos.run().changes;
+        if (repaired > 0) {
+          console.info(`[indexer] re-reading ${repaired} video(s) now that ffprobe is available`);
+        }
+      }
+
       status.phase = 'extracting';
       emitStatus(true);
       await extractPending();
@@ -549,7 +583,7 @@ export function cancelScan(): void {
 
 /** Indexes or refreshes one file discovered by the watcher. */
 async function indexOne(abs: string): Promise<void> {
-  if (!isSupportedImage(abs)) return;
+  if (!isIndexableMedia(abs)) return;
 
   let stat;
   try {
@@ -568,6 +602,7 @@ async function indexOne(abs: string): Promise<void> {
     dir: toRelPosix(dir),
     name: path.basename(rel),
     ext: path.extname(rel).toLowerCase(),
+    kind: kindOf(rel),
     size: stat.size,
     mtime_ms: Math.round(stat.mtimeMs),
     content_key: contentKey(rel, stat.size, stat.mtimeMs),

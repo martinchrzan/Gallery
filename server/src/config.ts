@@ -13,6 +13,8 @@ const ConfigSchema = z.object({
   host: z.string().default('0.0.0.0'),
   dataDir: z.string().default('./data'),
   trustProxy: z.boolean().default(false),
+  ffmpegPath: z.string().min(1).optional(),
+  ffprobePath: z.string().min(1).optional(),
 });
 
 export interface Config {
@@ -30,6 +32,13 @@ export interface Config {
    * session cookies are never marked `Secure` because the hop to us is plain HTTP.
    */
   trustProxy: boolean;
+  /**
+   * Explicit ffmpeg / ffprobe binaries. Left unset, the server uses the ones
+   * npm installed alongside it, and failing that whatever is on the PATH. They
+   * only affect videos, which are indexed and played without them either way.
+   */
+  ffmpegPath: string | null;
+  ffprobePath: string | null;
 }
 
 function readConfigFile(): unknown {
@@ -61,6 +70,8 @@ export function loadConfig(): Config {
     ...(process.env.HOST ? { host: process.env.HOST } : {}),
     ...(process.env.DATA_DIR ? { dataDir: process.env.DATA_DIR } : {}),
     ...(process.env.TRUST_PROXY ? { trustProxy: process.env.TRUST_PROXY === 'true' } : {}),
+    ...(process.env.FFMPEG_PATH ? { ffmpegPath: process.env.FFMPEG_PATH } : {}),
+    ...(process.env.FFPROBE_PATH ? { ffprobePath: process.env.FFPROBE_PATH } : {}),
   };
 
   const parsed = ConfigSchema.safeParse(merged);
@@ -96,6 +107,8 @@ export function loadConfig(): Config {
     thumbDir: path.join(dataDir, 'thumbs'),
     dbPath: path.join(dataDir, 'gallery.db'),
     trustProxy: raw.trustProxy,
+    ffmpegPath: raw.ffmpegPath ?? null,
+    ffprobePath: raw.ffprobePath ?? null,
   };
 }
 

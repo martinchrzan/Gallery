@@ -2,7 +2,7 @@ import { createReadStream } from 'node:fs';
 import fsp from 'node:fs/promises';
 import path from 'node:path';
 import type { FastifyInstance, FastifyReply } from 'fastify';
-import { getDb, markMetaFailed, META_FAILED } from '../db.js';
+import { getDb, KIND_VIDEO, markMetaFailed, META_FAILED } from '../db.js';
 import { currentUser } from '../guard.js';
 import { absFromRel, realpathWithin } from '../paths.js';
 import { accessScope, dirAllowed } from '../scope.js';
@@ -20,6 +20,24 @@ const MIME_BY_EXT: Record<string, string> = {
   '.tiff': 'image/tiff',
   '.heic': 'image/heic',
   '.heif': 'image/heif',
+  // Videos. `.mov` is deliberately served as video/mp4: Safari and Chrome both
+  // play an H.264 QuickTime file happily, and the honest `video/quicktime`
+  // makes some of them offer a download instead.
+  '.mp4': 'video/mp4',
+  '.m4v': 'video/mp4',
+  '.mov': 'video/mp4',
+  '.webm': 'video/webm',
+  '.ogv': 'video/ogg',
+  '.3gp': 'video/3gpp',
+  '.3g2': 'video/3gpp2',
+  '.mkv': 'video/x-matroska',
+  '.avi': 'video/x-msvideo',
+  '.mpg': 'video/mpeg',
+  '.mpeg': 'video/mpeg',
+  '.mts': 'video/mp2t',
+  '.m2ts': 'video/mp2t',
+  '.wmv': 'video/x-ms-wmv',
+  '.flv': 'video/x-flv',
 };
 
 export function mimeFor(name: string): string {
@@ -33,11 +51,16 @@ interface MediaRow {
   content_key: string;
   size: number;
   meta_state: number;
+  kind: number;
+  duration_ms: number | null;
 }
 
 function lookup(id: number): MediaRow | undefined {
   return getDb()
-    .prepare('SELECT rel_path, dir, name, content_key, size, meta_state FROM photos WHERE id = ?')
+    .prepare(
+      `SELECT rel_path, dir, name, content_key, size, meta_state, kind, duration_ms
+       FROM photos WHERE id = ?`,
+    )
     .get(id) as MediaRow | undefined;
 }
 
@@ -121,7 +144,10 @@ export async function mediaRoutes(app: FastifyInstance): Promise<void> {
       let thumbFile: string;
       try {
         const source = await realpathWithin(absFromRel(row.rel_path));
-        thumbFile = await getThumb(source, row.content_key, size);
+        thumbFile = await getThumb(source, row.content_key, size, {
+          video: row.kind === KIND_VIDEO,
+          durationMs: row.duration_ms,
+        });
       } catch (err) {
         req.log.warn({ err, id, path: row.rel_path }, 'thumbnail generation failed');
         // The file did not just fail to decode, it killed the decoder. Remember

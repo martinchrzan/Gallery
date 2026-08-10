@@ -3,6 +3,7 @@ import type {
   BrowseResult,
   FolderNode,
   IndexStatus,
+  MediaKind,
   PhotoDetail,
   Role,
   Settings,
@@ -16,6 +17,7 @@ export type {
   BrowseResult,
   FolderNode,
   IndexStatus,
+  MediaKind,
   PhotoDetail,
   Role,
   Settings,
@@ -37,9 +39,16 @@ export interface Manifest {
   times: Uint32Array;
   widths: Uint16Array;
   heights: Uint16Array;
+  /** 1 for a video, 0 for a photo — {@link MANIFEST_FLAG_VIDEO} unpacked. */
+  videos: Uint8Array;
+  /** Runtime in whole seconds; 0 for photos and for videos of unknown length. */
+  durations: Uint16Array;
 }
 
-export const RECORD_BYTES = 12;
+export const RECORD_BYTES = 16;
+
+/** Bit 0 of a record's flags field. */
+const MANIFEST_FLAG_VIDEO = 1;
 
 export const EMPTY_MANIFEST: Manifest = {
   count: 0,
@@ -47,7 +56,30 @@ export const EMPTY_MANIFEST: Manifest = {
   times: new Uint32Array(0),
   widths: new Uint16Array(0),
   heights: new Uint16Array(0),
+  videos: new Uint8Array(0),
+  durations: new Uint16Array(0),
 };
+
+/** Builds a manifest from parallel arrays, filling in whatever was omitted. */
+export function makeManifest(
+  fields: Partial<Manifest> & { count: number; ids: Uint32Array },
+): Manifest {
+  const { count } = fields;
+  return {
+    count,
+    ids: fields.ids,
+    times: fields.times ?? new Uint32Array(count),
+    widths: fields.widths ?? new Uint16Array(count),
+    heights: fields.heights ?? new Uint16Array(count),
+    videos: fields.videos ?? new Uint8Array(count),
+    durations: fields.durations ?? new Uint16Array(count),
+  };
+}
+
+/** True when the item at this position is a video rather than a photo. */
+export function isVideoAt(manifest: Manifest, index: number): boolean {
+  return manifest.videos[index] === 1;
+}
 
 /**
  * Called whenever the server rejects a request for want of a session, so a
@@ -95,6 +127,8 @@ export async function fetchManifest(signal?: AbortSignal): Promise<Manifest> {
   const times = new Uint32Array(count);
   const widths = new Uint16Array(count);
   const heights = new Uint16Array(count);
+  const videos = new Uint8Array(count);
+  const durations = new Uint16Array(count);
 
   // DataView with an explicit little-endian read: the packed layout is not
   // 4-byte aligned per field, so typed-array views over the buffer won't work.
@@ -105,9 +139,11 @@ export async function fetchManifest(signal?: AbortSignal): Promise<Manifest> {
     times[i] = view.getUint32(offset + 4, true);
     widths[i] = view.getUint16(offset + 8, true);
     heights[i] = view.getUint16(offset + 10, true);
+    durations[i] = view.getUint16(offset + 12, true);
+    videos[i] = view.getUint16(offset + 14, true) & MANIFEST_FLAG_VIDEO ? 1 : 0;
   }
 
-  return { count, ids, times, widths, heights };
+  return { count, ids, times, widths, heights, videos, durations };
 }
 
 /**

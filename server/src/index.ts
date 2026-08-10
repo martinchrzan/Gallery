@@ -13,6 +13,7 @@ import { getDb } from './db.js';
 import { authGuard } from './guard.js';
 import { startIndexer, stopIndexer } from './indexer.js';
 import { PathError } from './paths.js';
+import { videoToolStatus } from './video.js';
 import { destroyImagePool } from './workers/pool.js';
 import { authRoutes } from './routes/auth.js';
 import { filesRoutes } from './routes/files.js';
@@ -63,6 +64,10 @@ async function main(): Promise<void> {
         'frame-ancestors': ["'none'"],
         // `data:` is the inline SVG favicon in index.html.
         'img-src': ["'self'", 'data:'],
+        // Videos stream from /api/media/:id/original, same origin as everything
+        // else. Spelled out rather than left to default-src, so narrowing that
+        // later cannot silently break playback.
+        'media-src': ["'self'"],
         'object-src': ["'none'"],
         'script-src': ["'self'"],
         'style-src': ["'self'"],
@@ -164,6 +169,22 @@ async function main(): Promise<void> {
   // outside — it kills the process with a bare Windows exit code and no stack —
   // so seeing this line is how you know decoding happens somewhere survivable.
   app.log.info('image decoding runs in isolated worker processes');
+
+  // Videos are indexed and played whether or not ffmpeg is here; what it buys
+  // is their poster tiles and their real dates and dimensions. Worth saying
+  // out loud, because a library of grey video tiles has exactly one cause.
+  const tools = await videoToolStatus();
+  if (tools.ffmpeg && tools.ffprobe) {
+    app.log.info(`video support: ffmpeg at ${tools.ffmpeg}`);
+  } else {
+    const missing = [tools.ffmpeg ? null : 'ffmpeg', tools.ffprobe ? null : 'ffprobe']
+      .filter(Boolean)
+      .join(' and ');
+    app.log.warn(
+      `video support is limited: ${missing} not found. Videos still appear and play, but ` +
+        `without thumbnails or capture dates. Install ffmpeg, or set ffmpegPath/ffprobePath.`,
+    );
+  }
 
   await startIndexer();
 

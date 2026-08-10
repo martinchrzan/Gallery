@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { EMPTY_MANIFEST, fetchManifest, type Manifest } from '../api/client';
+import { EMPTY_MANIFEST, fetchManifest, isVideoAt, type Manifest } from '../api/client';
 import { Thumb } from '../components/Thumb';
 import { Lightbox } from '../lightbox/Lightbox';
 import { formatCount, formatDay } from '../lib/format';
@@ -167,6 +167,8 @@ export function GalleryView({ settings }: GalleryViewProps): React.ReactElement 
             y={layout.y[i]!}
             width={layout.width[i]!}
             height={layout.height[i]!}
+            video={isVideoAt(manifest, i)}
+            duration={manifest.durations[i] ?? 0}
             onOpen={() => setOpenIndex(i)}
           />,
         );

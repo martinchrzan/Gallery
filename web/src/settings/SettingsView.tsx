@@ -322,9 +322,17 @@ export function SettingsView({
         <section className="card">
           <h2>Library</h2>
           <div className="stat-grid">
+            {/* `photos` counts everything indexed, so the photo tile subtracts
+                the videos rather than double-counting them across the two. */}
             <div className="stat">
-              <div className="value">{stats ? formatCount(stats.photos) : '—'}</div>
+              <div className="value">
+                {stats ? formatCount(stats.photos - stats.videos) : '—'}
+              </div>
               <div className="label">Photos indexed</div>
+            </div>
+            <div className="stat">
+              <div className="value">{stats ? formatCount(stats.videos) : '—'}</div>
+              <div className="label">Videos indexed</div>
             </div>
             <div className="stat">
               <div className="value">{stats ? formatBytes(stats.totalBytes) : '—'}</div>

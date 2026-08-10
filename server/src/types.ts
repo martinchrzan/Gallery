@@ -63,8 +63,17 @@ export const DEFAULT_SETTINGS: Settings = {
   prewarmThumbs: false,
 };
 
+/**
+ * Photos and videos share one feed, one id space and one set of routes; this is
+ * the only thing that separates them on the client.
+ */
+export type MediaKind = 'photo' | 'video';
+
 export interface PhotoDetail {
   id: number;
+  kind: MediaKind;
+  /** Runtime in milliseconds for a video; null for a photo. */
+  duration: number | null;
   path: string;
   name: string;
   dir: string;
@@ -93,12 +102,14 @@ export interface FileEntry {
   path: string;
   size: number;
   modifiedAt: number;
-  /** Present when the file is an indexed, thumbnailable image. */
+  /** Present when the file is indexed, and so has a thumbnail and a viewer. */
   photoId: number | null;
   width: number | null;
   height: number | null;
   /** True for image types we can display but not thumbnail (e.g. HEIC). */
   unsupportedImage: boolean;
+  /** True when this entry is an indexed video rather than a photo. */
+  video: boolean;
 }
 
 export interface BrowseResult {
@@ -134,7 +145,9 @@ export interface AuthState {
 }
 
 export interface StatsResult {
+  /** Everything in the index, videos included. */
   photos: number;
+  videos: number;
   totalBytes: number;
   thumbBytes: number;
   thumbFiles: number;

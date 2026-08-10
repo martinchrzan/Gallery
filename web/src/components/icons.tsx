@@ -123,6 +123,29 @@ export const IconImage = (props: IconProps) => (
   </Svg>
 );
 
+/** Solid, unlike the rest: it reads as a play button rather than an outline. */
+export const IconPlay = ({ size = 16, className }: IconProps) => (
+  <svg
+    width={size}
+    height={size}
+    viewBox="0 0 24 24"
+    fill="currentColor"
+    aria-hidden="true"
+    focusable="false"
+    className={className}
+    style={{ flex: '0 0 auto' }}
+  >
+    <path d="M8 5.14v13.72a1 1 0 0 0 1.54.84l10.28-6.86a1 1 0 0 0 0-1.68L9.54 4.3A1 1 0 0 0 8 5.14Z" />
+  </svg>
+);
+
+export const IconVideo = (props: IconProps) => (
+  <Svg {...props}>
+    <rect x="2" y="5" width="14" height="14" rx="2" />
+    <path d="m22 8-6 4 6 4V8Z" />
+  </Svg>
+);
+
 export const IconSignOut = (props: IconProps) => (
   <Svg {...props}>
     <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4M16 17l5-5-5-5M21 12H9" />

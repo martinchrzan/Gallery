@@ -4,6 +4,7 @@ import {
   api,
   downloadZip,
   fileDownloadUrl,
+  makeManifest,
   thumbUrl,
   type BrowseResult,
   type Manifest,
@@ -14,6 +15,7 @@ import {
   IconFile,
   IconFolder,
   IconImage,
+  IconPlay,
 } from '../components/icons';
 import { Lightbox } from '../lightbox/Lightbox';
 import { formatBytes, formatCount } from '../lib/format';
@@ -74,20 +76,24 @@ export function FilesView(): React.ReactElement {
    * indexed images using exactly the same component as the gallery.
    */
   const folderManifest: Manifest = useMemo(() => {
-    const images = (data?.files ?? []).filter((file) => file.photoId !== null);
-    const ids = new Uint32Array(images.length);
-    const times = new Uint32Array(images.length);
-    const widths = new Uint16Array(images.length);
-    const heights = new Uint16Array(images.length);
+    const items = (data?.files ?? []).filter((file) => file.photoId !== null);
+    const ids = new Uint32Array(items.length);
+    const times = new Uint32Array(items.length);
+    const widths = new Uint16Array(items.length);
+    const heights = new Uint16Array(items.length);
+    const videos = new Uint8Array(items.length);
 
-    images.forEach((file, i) => {
+    items.forEach((file, i) => {
       ids[i] = file.photoId!;
       times[i] = Math.floor(file.modifiedAt / 1000);
       widths[i] = Math.min(65535, file.width ?? 0);
       heights[i] = Math.min(65535, file.height ?? 0);
+      videos[i] = file.video ? 1 : 0;
     });
 
-    return { count: images.length, ids, times, widths, heights };
+    // Durations are left at zero: browsing files, nothing shows them, and the
+    // lightbox reads the real one from the video itself.
+    return makeManifest({ count: items.length, ids, times, widths, heights, videos });
   }, [data]);
 
   const viewableFiles = useMemo(
@@ -295,6 +301,12 @@ function FileCard({ file, selected, onToggle, onOpen }: FileCardProps): React.Re
           >
             {file.unsupportedImage ? <IconImage size={30} /> : <IconFile size={30} />}
           </span>
+        )}
+
+        {file.video && (
+          <div className="thumb-video">
+            <IconPlay size={10} />
+          </div>
         )}
       </div>
 
