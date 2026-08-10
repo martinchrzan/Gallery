@@ -27,6 +27,18 @@ import { scaleToSlider, sliderToScale, useZoomPan } from './useZoomPan';
 
 /** Neighbours preloaded either side, so arrow-key browsing never waits. */
 const PRELOAD_RADIUS = 2;
+
+/**
+ * Which cached thumbnail a video's poster comes from.
+ *
+ * Mirrors the `1x`/`2x` srcSet on the grid tile, so this resolves to the URL
+ * the browser has *already* downloaded for the tile that was just clicked —
+ * which is what makes the poster appear on the same frame the viewer opens,
+ * with no request at all.
+ */
+function posterSize(): 320 | 640 {
+  return typeof window !== 'undefined' && window.devicePixelRatio > 1 ? 640 : 320;
+}
 /** Aspect used before the real dimensions are known. */
 const FALLBACK_ASPECT = 3 / 2;
 /** Travel before a touch drag is claimed as a swipe rather than a pan. */
@@ -35,6 +47,13 @@ const SWIPE_LOCK = 10;
 const SWIPE_COMMIT = 60;
 /** Gap between the current photo and the neighbour peeking in behind it. */
 const SWIPE_GAP = 24;
+/**
+ * Strip along the bottom of a player left alone by the swipe gesture, so
+ * dragging the scrubber seeks instead of browsing the library. Generous: the
+ * native control bar is ~40–50px on phones, it grows with the viewport, and
+ * over-reserving costs a band of a picture nobody swipes from anyway.
+ */
+const VIDEO_CONTROLS_BAND = 64;
 
 interface LightboxProps {
   manifest: Manifest;
@@ -65,6 +84,8 @@ export function Lightbox({
   const [rotation, setRotation] = useState(0);
   /** Set when the browser refuses the video's codec or container. */
   const [videoError, setVideoError] = useState(false);
+  /** Cleared until the player has a frame to show, so the spinner knows when to go. */
+  const [videoReady, setVideoReady] = useState(false);
 
   /** How far the photo has been dragged sideways by an in-flight swipe. */
   const [swipeDx, setSwipeDx] = useState(0);
@@ -80,6 +101,8 @@ export function Lightbox({
   const swipe = useRef<{ x: number; y: number; dx: number; axis: 'x' | 'y' | null } | null>(null);
   /** A second finger means pinch-zoom, which cancels any swipe in progress. */
   const touches = useRef(0);
+  /** The player, so a gesture can tell its control bar from its picture. */
+  const videoRef = useRef<HTMLVideoElement>(null);
 
   const id = manifest.ids[index];
   const manifestWidth = manifest.widths[index] ?? 0;
@@ -148,6 +171,7 @@ export function Lightbox({
     setMeasured(null);
     setRotation(0);
     setVideoError(false);
+    setVideoReady(false);
   }, [id]);
 
   // Zooming past the fit means the preview is no longer sharp enough.
@@ -216,6 +240,12 @@ export function Lightbox({
       if (offset === 0) continue;
       const neighbour = index + offset;
       if (neighbour < 0 || neighbour >= manifest.count) continue;
+      // Never for a video. The 1600px size of a photo is a libvips resize of
+      // bytes already on disk, but of a video it is an ffmpeg seek and decode
+      // that has almost certainly never run — and the player does not use that
+      // size anyway. Preloading it would spend seconds of server time per
+      // neighbour to warm something nothing asks for.
+      if (isVideoAt(manifest, neighbour)) continue;
 
       const image = new Image();
       image.decoding = 'async';
@@ -265,6 +295,87 @@ export function Lightbox({
       else setSettling(true);
     },
     [go, stage.width],
+  );
+
+  /**
+   * True when a touch landed on the player's own control bar. Measured off the
+   * video element rather than the stage, so a letterboxed clip reserves the
+   * strip under its picture and not the black band below it.
+   */
+  const onVideoControls = useCallback((event: React.PointerEvent): boolean => {
+    const element = videoRef.current;
+    if (!element) return false;
+    const rect = element.getBoundingClientRect();
+    return (
+      event.clientX >= rect.left &&
+      event.clientX <= rect.right &&
+      event.clientY > rect.bottom - VIDEO_CONTROLS_BAND &&
+      event.clientY <= rect.bottom
+    );
+  }, []);
+
+  /**
+   * Swipe for a video: the same gesture as a photo's, minus the zoom and pan it
+   * shares the stage with there. Everything is withheld until the drag passes
+   * the axis lock, so a plain tap still reaches the player and toggles play.
+   */
+  const videoSwipeHandlers: React.HTMLAttributes<HTMLDivElement> = {
+    onPointerDown: (event) => {
+      // Recorded before any early return below: releasing a drag over the
+      // backdrop still fires a click, and without this the swipe would both
+      // browse *and* close the viewer.
+      press.current = { x: event.clientX, y: event.clientY, moved: false };
+
+      touches.current += 1;
+      if (touches.current > 1) {
+        endSwipe(false);
+        return;
+      }
+      if (!canSwipe(event) || onVideoControls(event)) return;
+      setSettling(false);
+      swipe.current = { x: event.clientX, y: event.clientY, dx: 0, axis: null };
+    },
+    onPointerMove: (event) => {
+      const start = press.current;
+      if (start && (Math.abs(event.clientX - start.x) > 4 || Math.abs(event.clientY - start.y) > 4)) {
+        start.moved = true;
+      }
+
+      const gesture = swipe.current;
+      if (!gesture) return;
+
+      const dx = event.clientX - gesture.x;
+      const dy = event.clientY - gesture.y;
+      if (gesture.axis === null && Math.hypot(dx, dy) > SWIPE_LOCK) {
+        gesture.axis = Math.abs(dx) > Math.abs(dy) ? 'x' : 'y';
+      }
+      if (gesture.axis === 'x') {
+        gesture.dx = dx;
+        setSwipeDx(dx);
+      }
+    },
+    onPointerUp: () => {
+      touches.current = Math.max(0, touches.current - 1);
+      endSwipe(true);
+    },
+    onPointerCancel: () => {
+      touches.current = Math.max(0, touches.current - 1);
+      endSwipe(false);
+    },
+  };
+
+  /**
+   * The preview a neighbour is drawn from mid-swipe. A video's 1600px size is
+   * an ffmpeg render that has never run, so peeking at one would stall the
+   * gesture; its grid poster is already in the browser and letterboxes just as
+   * well for the few hundred milliseconds it is on screen.
+   */
+  const peekUrl = useCallback(
+    (position: number): string => {
+      const at = (position + manifest.count) % manifest.count;
+      return thumbUrl(manifest.ids[at]!, isVideoAt(manifest, at) ? posterSize() : 1600);
+    },
+    [manifest],
   );
 
   /** Quarter turn, kept in 0–270 so the transform never accumulates. */
@@ -583,21 +694,44 @@ export function Lightbox({
           ref={stageRef}
           className={
             isVideo
-              ? 'lightbox-stage video'
+              ? `lightbox-stage video${settling ? ' settling' : ''}`
               : `lightbox-stage${view.zoomed ? ' zoomed' : ''}${view.panning ? ' panning' : ''}${settling ? ' settling' : ''}`
           }
-          {...(isVideo ? {} : stageInteraction)}
+          {...(isVideo ? videoSwipeHandlers : stageInteraction)}
           onClick={(event) => {
             // Only the bare backdrop closes: a click that landed on the photo,
             // an arrow or anything else bubbles up with a different target.
             if (event.target !== event.currentTarget) return;
-            // A video never sets `press`, so what is in there is left over from
-            // the last photo — and a drag on that one must not go on blocking
-            // clicks here.
-            if (!isVideo && press.current?.moved) return;
+            // Both branches record the press, so a drag that ends on the
+            // backdrop browses the library without also closing the viewer.
+            if (press.current?.moved) return;
             onClose();
           }}
         >
+          {/* The neighbours ride along under the finger, so a swipe reads as
+              travelling through the library rather than dragging one item off
+              into the void. Drawn before the current one so it stays on top,
+              and only present for the duration of the gesture. Shared by both
+              branches: a video is swiped exactly the way a photo is. */}
+          {(swipeDx !== 0 || settling) && manifest.count > 1 && (
+            <>
+              <img
+                className="swipe-peek"
+                src={peekUrl(index - 1)}
+                alt=""
+                draggable={false}
+                style={{ transform: `translate3d(${swipeDx - stage.width - SWIPE_GAP}px, 0, 0)` }}
+              />
+              <img
+                className="swipe-peek"
+                src={peekUrl(index + 1)}
+                alt=""
+                draggable={false}
+                style={{ transform: `translate3d(${swipeDx + stage.width + SWIPE_GAP}px, 0, 0)` }}
+              />
+            </>
+          )}
+
           {isVideo ? (
             videoError ? (
               // The file is fine — the browser just has no decoder for it. Say
@@ -612,47 +746,43 @@ export function Lightbox({
                 </button>
               </div>
             ) : (
-              <video
-                key={`video-${id}`}
-                className="lightbox-video"
-                src={originalUrl(id)}
-                // The 1600px poster is the same frame the grid tile showed, and
-                // is usually already cached — so the first paint is instant
-                // instead of a black box while the stream opens.
-                poster={thumbUrl(id, 1600)}
-                controls
-                autoPlay
-                playsInline
-                preload="metadata"
-                onError={() => setVideoError(true)}
-              />
+              <>
+                <video
+                  key={`video-${id}`}
+                  ref={videoRef}
+                  className="lightbox-video"
+                  // Rides the finger alongside the neighbours, so the gesture
+                  // looks the same over a video as over a photo. Always set, so
+                  // an abandoned swipe has a value to transition back *from*.
+                  style={{ transform: `translate3d(${swipeDx}px, 0, 0)` }}
+                  src={originalUrl(id)}
+                  /**
+                   * The size the grid tile already fetched, not the 1600px one
+                   * the photo path uses. For a photo those are both a libvips
+                   * resize of bytes on disk, but a video's 1600px poster is an
+                   * ffmpeg seek and decode that has almost certainly never run
+                   * — so pointing at it made every first open of a video wait
+                   * on the server, which is the black pause this removes. This
+                   * one is a browser cache hit, and paints immediately.
+                   */
+                  poster={thumbUrl(id, posterSize())}
+                  controls
+                  autoPlay
+                  playsInline
+                  // The poster covers the wait, so there is nothing to gain by
+                  // holding the stream back to metadata.
+                  preload="auto"
+                  // `loadeddata` is the first frame actually decoded: the point
+                  // at which the player has something of its own to show.
+                  onLoadedData={() => setVideoReady(true)}
+                  onError={() => setVideoError(true)}
+                />
+                {!videoReady && <div className="video-spinner" />}
+              </>
             )
           ) : (
             <>
               {!previewLoaded && <div className="loading-bar" />}
-
-              {/* The neighbours ride along under the finger, so a swipe reads as
-                  travelling through the library rather than dragging one photo off
-                  into the void. They are drawn before the current photo so it stays
-                  on top, and only exist for the duration of the gesture. */}
-              {(swipeDx !== 0 || settling) && manifest.count > 1 && (
-                <>
-                  <img
-                    className="swipe-peek"
-                    src={thumbUrl(manifest.ids[(index - 1 + manifest.count) % manifest.count]!, 1600)}
-                    alt=""
-                    draggable={false}
-                    style={{ transform: `translate3d(${swipeDx - stage.width - SWIPE_GAP}px, 0, 0)` }}
-                  />
-                  <img
-                    className="swipe-peek"
-                    src={thumbUrl(manifest.ids[(index + 1) % manifest.count]!, 1600)}
-                    alt=""
-                    draggable={false}
-                    style={{ transform: `translate3d(${swipeDx + stage.width + SWIPE_GAP}px, 0, 0)` }}
-                  />
-                </>
-              )}
 
               {/* The 1600px preview appears immediately — it is usually already
                   cached from the grid's own thumbnail pipeline. */}

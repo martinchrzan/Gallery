@@ -790,11 +790,26 @@ input[type='checkbox'] {
   align-items: center;
   justify-content: center;
   padding: 8px;
-  touch-action: auto;
+  /* `pan-y`, not the stage's usual `none`: horizontal travel is ours, to browse
+     the library, while anything vertical stays with the browser. Restricting
+     panning does not stop the player's own controls, which drive the scrubber
+     from pointer events rather than from scrolling. */
+  touch-action: pan-y;
   cursor: default;
 }
 
+/* Settling applies to the photo stage's <img>; the player needs the same glide
+   back when a swipe is abandoned. */
+.lightbox-stage.video.settling .lightbox-video {
+  transition: transform 0.2s cubic-bezier(0.2, 0, 0, 1);
+}
+
 .lightbox-video {
+  /* Positioned only to earn a stacking order: the swipe peeks are absolute, so
+     against a static player they would paint over the top of it. No offsets,
+     so this does not move the element. */
+  position: relative;
+  z-index: 1;
   max-width: 100%;
   max-height: 100%;
   /* Without this the element keeps its intrinsic width in the flex row and a
@@ -802,6 +817,24 @@ input[type='checkbox'] {
   min-width: 0;
   outline: none;
   background: #000;
+}
+
+/* Sits over the poster while the stream buffers. Larger and lighter than the
+   app's own `.spinner`, which is sized for a status pill on a white page. */
+.video-spinner {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 34px;
+  height: 34px;
+  margin: -17px 0 0 -17px;
+  border: 3px solid rgba(255, 255, 255, 0.28);
+  border-top-color: rgba(255, 255, 255, 0.92);
+  border-radius: 50%;
+  animation: spin 0.7s linear infinite;
+  pointer-events: none;
+  /* Above the player, which now carries a stacking order of its own. */
+  z-index: 2;
 }
 
 .video-unplayable {
@@ -1447,18 +1480,11 @@ input[type='checkbox'] {
   }
 
   /* Swiping browses the library here, the way every phone gallery does, so the
-     arrows are dead weight sitting on top of the photo. */
+     arrows are dead weight sitting on top of the photo — and over a video they
+     are worse than dead weight, landing on the picture and near the controls.
+     A video is a dead end on touch as a result: close the viewer to move on. */
   .lightbox-nav {
     display: none;
-  }
-
-  /* Except over a video, which does not swipe — the player needs the pointer
-     for its own scrubber. Without the arrows there would be no way off a clip
-     but closing the viewer, so they come back, and visibly: there is no hover
-     on a touchscreen to reveal them. */
-  .lightbox-stage.video .lightbox-nav {
-    display: flex;
-    opacity: 1;
   }
 
   .year-rail {
