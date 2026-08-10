@@ -20,8 +20,10 @@ export interface LayoutOptions {
 export const DEFAULT_LAYOUT: Omit<LayoutOptions, 'containerWidth'> = {
   targetRowHeight: 240,
   gap: 4,
-  headerHeight: 46,
-  sectionSpacing: 24,
+  // Must stay in step with `.day-header` in styles.css: the layout reserves the
+  // band, the CSS draws the label inside it.
+  headerHeight: 32,
+  sectionSpacing: 12,
 };
 
 /** Aspect ratio used until a photo's real dimensions have been extracted. */

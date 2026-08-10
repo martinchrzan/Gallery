@@ -18,6 +18,7 @@ import {
   IconZoom,
 } from '../components/icons';
 import { formatCount } from '../lib/format';
+import { useCloseOnBack } from '../lib/hooks';
 import { MetadataPanel } from './MetadataPanel';
 import { scaleToSlider, sliderToScale, useZoomPan } from './useZoomPan';
 
@@ -299,6 +300,8 @@ export function Lightbox({
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
   }, [download, go, onClose, reset, toggleZoom, zoomBy]);
+
+  useCloseOnBack(onClose);
 
   // The page behind must not scroll while the lightbox is open.
   useEffect(() => {

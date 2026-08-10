@@ -89,6 +89,57 @@ export function useIndexStatus(enabled = true): IndexStatus | null {
   return status;
 }
 
+/** Marks the throwaway history entry an overlay parks on. */
+const OVERLAY_MARK = '__overlay';
+/**
+ * True while a `history.back()` we issued ourselves is in flight, so the
+ * popstate it produces is not mistaken for the user pressing Back.
+ * Module-level because only one overlay is ever open at a time.
+ */
+let unwinding = false;
+
+/**
+ * Makes the system Back gesture close an overlay instead of leaving the app.
+ *
+ * Android's hardware Back is the way out of a full-screen view on a phone, and
+ * a web app that ignores it drops the user onto whatever preceded the gallery.
+ * So an open overlay parks on a throwaway history entry: Back pops that entry,
+ * and the popstate closes the overlay while the app stays put.
+ *
+ * Closing any other way (Esc, the close button, a tap on the backdrop) unwinds
+ * that entry again on the way out — otherwise it lingers on the stack and the
+ * next Back press would replay the overlay instead of going anywhere.
+ */
+export function useCloseOnBack(close: () => void): void {
+  // Read through a ref: the caller's handler is usually a fresh closure each
+  // render, and re-running this effect would churn the history stack.
+  const closeRef = useRef(close);
+  closeRef.current = close;
+
+  useEffect(() => {
+    // Keep whatever the router put here — it tracks its own position in `state`.
+    window.history.pushState({ ...window.history.state, [OVERLAY_MARK]: true }, '');
+
+    const onPop = (): void => {
+      if (unwinding) {
+        unwinding = false;
+        return;
+      }
+      closeRef.current();
+    };
+
+    window.addEventListener('popstate', onPop);
+    return () => {
+      window.removeEventListener('popstate', onPop);
+      // Already popped when Back is what closed us; only unwind if it is still there.
+      if ((window.history.state as Record<string, unknown> | null)?.[OVERLAY_MARK]) {
+        unwinding = true;
+        window.history.back();
+      }
+    };
+  }, []);
+}
+
 /** Transient status message shown in the bottom toast. */
 export function useToast(): [
   { message: string; error: boolean } | null,

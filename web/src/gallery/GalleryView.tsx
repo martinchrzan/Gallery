@@ -239,7 +239,6 @@ export function GalleryView({ settings }: GalleryViewProps): React.ReactElement 
               style={{ transform: `translate3d(0, ${section.headerY}px, 0)` }}
             >
               {formatDay(section.dayStart)}
-              <span className="count">{formatCount(section.photoCount)}</span>
             </div>
           ))}
           {tiles}
