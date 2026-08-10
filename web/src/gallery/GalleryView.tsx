@@ -14,6 +14,8 @@ import {
   yearTicks,
   type Layout,
 } from './layout';
+import { MemoriesStrip } from './MemoriesStrip';
+import { pickMemories } from './memories';
 import { YearRail } from './YearRail';
 import type { Settings } from '@shared';
 
@@ -35,6 +37,14 @@ export function GalleryView({ settings }: GalleryViewProps): React.ReactElement 
   // Held as state, not a ref: the loading placeholder renders first, so the
   // measuring effects have to re-run once the real scroller mounts.
   const [scrollEl, setScrollEl] = useState<HTMLDivElement | null>(null);
+  const [canvasEl, setCanvasEl] = useState<HTMLDivElement | null>(null);
+  /**
+   * Where the grid starts inside the scroller. Zero until the memories strip
+   * above it has been measured — everything the layout computes is relative to
+   * the canvas, so the scroll position has to be moved into the same frame or
+   * the sticky day heading and the year rail both read one strip too far down.
+   */
+  const [canvasOffset, setCanvasOffset] = useState(0);
   const { width: scrollWidth, height: viewportHeight } = useElementSize(scrollEl);
   const containerWidth = scrollWidth;
   const indexStatus = useIndexStatus();
@@ -85,7 +95,35 @@ export function GalleryView({ settings }: GalleryViewProps): React.ReactElement 
 
   const ticks = useMemo(() => yearTicks(layout), [layout]);
 
+  /* ------------------------------------------------------------- memories */
+
+  const memories = useMemo(
+    () => (settings?.showMemories === true ? pickMemories(manifest) : []),
+    [manifest, settings?.showMemories],
+  );
+
   /* --------------------------------------------------------------- scroll */
+
+  // The strip's height is not known ahead of time — it depends on the tiles'
+  // aspects and on the viewport — so the canvas is asked where it ended up
+  // rather than the offset being derived from a constant.
+  useEffect(() => {
+    if (!canvasEl) {
+      setCanvasOffset(0);
+      return;
+    }
+
+    const measure = (): void => setCanvasOffset(canvasEl.offsetTop);
+    measure();
+
+    const observer = new ResizeObserver(measure);
+    observer.observe(canvasEl);
+    // Its own size never changes when the strip above grows or disappears, so
+    // the thing that pushes it has to be watched too.
+    const strip = canvasEl.parentElement?.querySelector('.memories');
+    if (strip) observer.observe(strip);
+    return () => observer.disconnect();
+  }, [canvasEl, memories]);
 
   useEffect(() => {
     if (!scrollEl) return;
@@ -110,19 +148,23 @@ export function GalleryView({ settings }: GalleryViewProps): React.ReactElement 
   }, [scrollEl]);
 
   const scrubTo = useCallback(
-    (offsetY: number) => scrollEl?.scrollTo({ top: offsetY, behavior: 'auto' }),
-    [scrollEl],
+    (offsetY: number) => scrollEl?.scrollTo({ top: offsetY + canvasOffset, behavior: 'auto' }),
+    [canvasOffset, scrollEl],
   );
 
   /* ------------------------------------------------------- visible window */
+
+  /** Scroll position in the layout's own coordinates: negative while the
+   *  memories strip above the grid is still on screen. */
+  const canvasTop = scrollTop - canvasOffset;
 
   const visible = useMemo(() => {
     if (layout.rows.length === 0 || viewportHeight === 0) {
       return { rowStart: 0, rowEnd: 0, sectionStart: 0, sectionEnd: 0 };
     }
 
-    const top = scrollTop - viewportHeight * OVERSCAN;
-    const bottom = scrollTop + viewportHeight * (1 + OVERSCAN);
+    const top = canvasTop - viewportHeight * OVERSCAN;
+    const bottom = canvasTop + viewportHeight * (1 + OVERSCAN);
 
     const rowStart = firstRowAt(layout, top);
     let rowEnd = rowStart;
@@ -145,11 +187,11 @@ export function GalleryView({ settings }: GalleryViewProps): React.ReactElement 
     }
 
     return { rowStart, rowEnd, sectionStart, sectionEnd };
-  }, [layout, scrollTop, viewportHeight]);
+  }, [layout, canvasTop, viewportHeight]);
 
   const stickySection = useMemo(
-    () => (layout.sections.length > 0 ? sectionAt(layout, scrollTop + 8) : null),
-    [layout, scrollTop],
+    () => (layout.sections.length > 0 ? sectionAt(layout, canvasTop + 8) : null),
+    [layout, canvasTop],
   );
 
   const tiles = useMemo(() => {
@@ -233,7 +275,15 @@ export function GalleryView({ settings }: GalleryViewProps): React.ReactElement 
   return (
     <div className="gallery">
       <div className="gallery-scroll" ref={setScrollEl}>
-        <div className="gallery-canvas" style={{ height: `${layout.totalHeight}px` }}>
+        {/* Above the feed and part of it: the strip scrolls away with the page
+            rather than holding a band of every screen for ever. */}
+        <MemoriesStrip manifest={manifest} memories={memories} onOpen={setOpenIndex} />
+
+        <div
+          className="gallery-canvas"
+          ref={setCanvasEl}
+          style={{ height: `${layout.totalHeight}px` }}
+        >
           {layout.sections.slice(visible.sectionStart, visible.sectionEnd).map((section) => (
             <div
               key={`${section.dayStart}-${section.photoStart}`}
@@ -247,7 +297,7 @@ export function GalleryView({ settings }: GalleryViewProps): React.ReactElement 
         </div>
       </div>
 
-      <div className={`sticky-day${scrollTop > 40 && stickySection ? ' visible' : ''}`}>
+      <div className={`sticky-day${canvasTop > 40 && stickySection ? ' visible' : ''}`}>
         {stickySection ? formatDay(stickySection.dayStart) : ''}
       </div>
 
@@ -255,7 +305,7 @@ export function GalleryView({ settings }: GalleryViewProps): React.ReactElement 
         ticks={ticks}
         totalHeight={layout.totalHeight}
         viewportHeight={viewportHeight}
-        scrollTop={scrollTop}
+        scrollTop={canvasTop}
         onScrubTo={scrubTo}
       />
 

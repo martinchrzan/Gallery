@@ -11,6 +11,11 @@ const dayWithYearFormatter = new Intl.DateTimeFormat(undefined, {
   year: 'numeric',
 });
 
+const monthDayFormatter = new Intl.DateTimeFormat(undefined, {
+  day: 'numeric',
+  month: 'long',
+});
+
 const dateTimeFormatter = new Intl.DateTimeFormat(undefined, {
   dateStyle: 'medium',
   timeStyle: 'short',
@@ -25,6 +30,11 @@ export function formatDay(dayStart: number): string {
   return date.getFullYear() === new Date().getFullYear()
     ? dayFormatter.format(date)
     : dayWithYearFormatter.format(date);
+}
+
+/** A date with no year, for headings that already say which year they mean. */
+export function formatMonthDay(ms: number): string {
+  return monthDayFormatter.format(new Date(ms));
 }
 
 export function formatDateTime(ms: number | null): string {

@@ -284,6 +284,24 @@ export function SettingsView({
               />
             </div>
           </div>
+
+          <div className="field">
+            <div>
+              <label htmlFor="show-memories">“On this day” strip</label>
+              <div className="desc">
+                A row above the feed with a few photos taken on today’s date one, two and three
+                years ago. It only appears on days that have any, and scrolls away with the page.
+              </div>
+            </div>
+            <div className="field-control">
+              <input
+                id="show-memories"
+                type="checkbox"
+                checked={settings.showMemories}
+                onChange={(event) => void save({ showMemories: event.target.checked })}
+              />
+            </div>
+          </div>
         </section>
 
         <section className="card">

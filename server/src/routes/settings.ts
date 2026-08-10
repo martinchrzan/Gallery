@@ -15,6 +15,7 @@ const SettingsPatch = z
     indexIntervalHours: z.number().min(0.25).max(24 * 7).optional(),
     rowHeight: z.number().int().min(120).max(600).optional(),
     showMetadata: z.boolean().optional(),
+    showMemories: z.boolean().optional(),
     prewarmThumbs: z.boolean().optional(),
   })
   .strict();
@@ -37,6 +38,7 @@ function visibleSettings(user: User): Settings {
     galleryFolders: galleryScope(user),
     rowHeight: settings.rowHeight,
     showMetadata: settings.showMetadata,
+    showMemories: settings.showMemories,
   };
 }
 

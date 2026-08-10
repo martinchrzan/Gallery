@@ -453,6 +453,187 @@ input[type='checkbox'] {
   margin: 16px 0 72px;
 }
 
+/* ---------------------------------------------------- memories ("on this day")
+
+   One row, never two: the strip sits on top of the whole gallery, so it has to
+   cost a fixed, small band of the screen on a phone as much as on a desktop.
+   Everything that does not fit is reached by scrolling sideways. */
+
+.memories {
+  --memory-h: 150px;
+  padding: 14px 0 4px;
+}
+
+.memories-head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 0 0 8px;
+}
+
+.memories-head h2 {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 650;
+  letter-spacing: -0.02em;
+}
+
+.memories-date {
+  font-size: 12.5px;
+  color: var(--text-dim);
+}
+
+.memories-rail {
+  position: relative;
+}
+
+.memories-track {
+  /* The offset parent the auto-advance measures each tile against. */
+  position: relative;
+  display: flex;
+  gap: 6px;
+  height: var(--memory-h);
+  overflow-x: auto;
+  overflow-y: hidden;
+  scroll-snap-type: x mandatory;
+  /* Keeps a flick past the last photo from triggering the browser's own
+     back gesture, which is otherwise easy to hit on a trackpad. */
+  overscroll-behavior-x: contain;
+  scrollbar-width: none;
+}
+
+.memories-track::-webkit-scrollbar {
+  display: none;
+}
+
+.memory {
+  position: relative;
+  flex: 0 0 auto;
+  height: 100%;
+  width: auto;
+  /* Width follows from the photo's own aspect, set inline. Clamped so a
+     panorama cannot take the whole rail and a tall portrait stays tappable. */
+  min-width: calc(var(--memory-h) * 0.6);
+  max-width: calc(var(--memory-h) * 1.9);
+  padding: 0;
+  overflow: hidden;
+  border-radius: var(--radius-sm);
+  background: var(--surface-sunken);
+  scroll-snap-align: start;
+  cursor: pointer;
+}
+
+.memory img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+  opacity: 0;
+  transition: opacity 0.25s ease-out;
+}
+
+.memory img.loaded {
+  opacity: 1;
+}
+
+.memory::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background: rgba(20, 22, 26, 0);
+  box-shadow: inset 0 0 0 1px rgba(16, 24, 40, 0.12);
+  transition: background 0.14s ease, box-shadow 0.14s ease;
+  pointer-events: none;
+}
+
+.memory:hover::after {
+  background: rgba(20, 22, 26, 0.1);
+  box-shadow: inset 0 0 0 2px var(--accent);
+}
+
+/* The tiles are shuffled together, so each one has to say which year it is
+   from. Sits on a scrim rather than a solid chip: photos are busy at the top
+   left as often as anywhere else. */
+.memory-years {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  /* Above the hover overlay, which is a pseudo-element and so paints last. */
+  z-index: 1;
+  padding: 5px 8px 12px;
+  background: linear-gradient(rgba(12, 14, 18, 0.55), rgba(12, 14, 18, 0));
+  color: #fff;
+  font-size: 11px;
+  font-weight: 600;
+  text-align: left;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.4);
+  pointer-events: none;
+}
+
+.memory-video {
+  position: absolute;
+  right: 5px;
+  bottom: 5px;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 1px 5px;
+  border-radius: 4px;
+  background: rgba(12, 14, 18, 0.66);
+  color: #fff;
+  font-size: 10.5px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.5;
+  pointer-events: none;
+}
+
+/* Pointer-only affordance: a touch device swipes the rail instead. */
+.memories-arrow {
+  position: absolute;
+  top: 50%;
+  transform: translateY(-50%);
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text-dim);
+  box-shadow: var(--shadow-md);
+  opacity: 0;
+  transition: opacity 0.14s ease, color 0.14s ease;
+}
+
+.memories-arrow.prev {
+  left: -6px;
+}
+
+.memories-arrow.next {
+  right: -6px;
+}
+
+.memories-rail:hover .memories-arrow,
+.memories-arrow:focus-visible {
+  opacity: 1;
+}
+
+.memories-arrow:hover {
+  color: var(--text);
+}
+
+@media (hover: none) {
+  .memories-arrow {
+    display: none;
+  }
+}
+
 /* Sits inside the band DEFAULT_LAYOUT.headerHeight reserves — keep the two in
    step, or the label drifts into the photos below it. */
 .day-header {
@@ -1507,6 +1688,12 @@ input[type='checkbox'] {
   .files {
     padding-left: 12px;
     padding-right: 12px;
+  }
+
+  /* Shorter tiles here: the strip costs the same band on every screen, and on a
+     phone that band has to leave the feed underneath it visible. */
+  .memories {
+    --memory-h: 108px;
   }
 }
 

@@ -50,6 +50,8 @@ export interface Settings {
   rowHeight: number;
   /** Whether the lightbox metadata panel starts open. */
   showMetadata: boolean;
+  /** Whether the "on this day" strip appears above the feed. */
+  showMemories: boolean;
   /** Generate all grid thumbnails in the background after a scan. */
   prewarmThumbs: boolean;
 }
@@ -60,6 +62,7 @@ export const DEFAULT_SETTINGS: Settings = {
   indexIntervalHours: 6,
   rowHeight: 240,
   showMetadata: false,
+  showMemories: true,
   prewarmThumbs: false,
 };
 
