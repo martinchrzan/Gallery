@@ -15,6 +15,7 @@ import {
   IconDownload,
   IconExpand,
   IconInfo,
+  IconRotate,
   IconZoom,
 } from '../components/icons';
 import { formatCount } from '../lib/format';
@@ -57,6 +58,9 @@ export function Lightbox({
   const [stage, setStage] = useState({ width: 0, height: 0 });
   /** Filled in when the manifest has no dimensions for this photo. */
   const [measured, setMeasured] = useState<{ width: number; height: number } | null>(null);
+  /** Quarter turns applied on screen only, in degrees. Nothing is written back
+   *  to the file or the index, so it lasts as long as the photo is open. */
+  const [rotation, setRotation] = useState(0);
 
   /** How far the photo has been dragged sideways by an in-flight swipe. */
   const [swipeDx, setSwipeDx] = useState(0);
@@ -86,14 +90,28 @@ export function Lightbox({
     return { width: Math.round(1000 * FALLBACK_ASPECT), height: 1000 };
   }, [manifestWidth, manifestHeight, measured]);
 
+  /**
+   * What the photo occupies on screen once rotated: a quarter turn swaps the
+   * axes. Every piece of geometry below — fitting, panning, the clamp that keeps
+   * the photo on stage — works on this box rather than the file's own
+   * dimensions, so a rotated portrait fits the way a landscape one would.
+   */
+  const quarterTurned = rotation % 180 !== 0;
+  const box = {
+    width: quarterTurned ? natural.height : natural.width,
+    height: quarterTurned ? natural.width : natural.height,
+  };
+
   const { state: view, reset, zoomBy, zoomTo, toggleZoom, handlers } = useZoomPan({
     stageWidth: stage.width,
     stageHeight: stage.height,
-    imageWidth: natural.width,
-    imageHeight: natural.height,
+    imageWidth: box.width,
+    imageHeight: box.height,
     // Two consecutive photos can share dimensions exactly (common among
     // screenshots), so the geometry alone is not enough to trigger a re-fit.
-    resetKey: id,
+    // Rotation joins the key so a half turn — which leaves the box unchanged —
+    // still lands back at fit rather than keeping a now-meaningless pan.
+    resetKey: `${id}:${rotation}`,
   });
 
   /* ---------------------------------------------------------------- stage */
@@ -118,6 +136,7 @@ export function Lightbox({
     setOriginalLoaded(false);
     setWantOriginal(false);
     setMeasured(null);
+    setRotation(0);
   }, [id]);
 
   // Zooming past the fit means the preview is no longer sharp enough.
@@ -237,6 +256,11 @@ export function Lightbox({
     [go, stage.width],
   );
 
+  /** Quarter turn, kept in 0–270 so the transform never accumulates. */
+  const rotate = useCallback((delta: number) => {
+    setRotation((value) => (value + delta + 360) % 360);
+  }, []);
+
   const download = useCallback(() => {
     if (id === undefined) return;
     const link = document.createElement('a');
@@ -274,6 +298,14 @@ export function Lightbox({
           event.preventDefault();
           download();
           break;
+        case 'r':
+          event.preventDefault();
+          rotate(90);
+          break;
+        case 'R':
+          event.preventDefault();
+          rotate(-90);
+          break;
         case 'f':
         case 'F':
         case 'Enter':
@@ -299,7 +331,7 @@ export function Lightbox({
 
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, [download, go, onClose, reset, toggleZoom, zoomBy]);
+  }, [download, go, onClose, reset, rotate, toggleZoom, zoomBy]);
 
   useCloseOnBack(onClose);
 
@@ -314,7 +346,21 @@ export function Lightbox({
 
   if (id === undefined) return null;
 
-  const transform = `translate3d(${view.x + swipeDx}px, ${view.y}px, 0) scale(${view.scale})`;
+  /**
+   * Read right to left: the image is centred on its own middle, turned, then
+   * pushed back so that middle sits in the middle of the *rotated* box the
+   * layout above reasoned about. Only after that do the pan and zoom apply, to
+   * a box whose top-left corner is now exactly at `view.x, view.y`.
+   *
+   * `transform-origin: 0 0` (see styles.css) is what makes this predictable —
+   * every offset here is written out rather than half-implied by the origin.
+   */
+  const orient =
+    rotation === 0
+      ? ''
+      : ` translate(${box.width / 2}px, ${box.height / 2}px) rotate(${rotation}deg)` +
+        ` translate(${-natural.width / 2}px, ${-natural.height / 2}px)`;
+  const transform = `translate3d(${view.x + swipeDx}px, ${view.y}px, 0) scale(${view.scale})${orient}`;
   const imageStyle: React.CSSProperties = {
     width: `${natural.width}px`,
     height: `${natural.height}px`,
@@ -381,6 +427,18 @@ export function Lightbox({
             <span className="btn-label">1:1</span>
           </button>
         </div>
+        {/* Shift-click turns the other way, matching the shortcut. The label
+            says "Rotate" rather than naming a direction, because the button
+            does both. */}
+        <button
+          className={`btn${rotation === 0 ? '' : ' btn-on'}`}
+          onClick={(event) => rotate(event.shiftKey ? -90 : 90)}
+          title="Rotate (R, shift for anticlockwise)"
+          aria-label="Rotate"
+        >
+          <IconRotate />
+          <span className="btn-label">Rotate</span>
+        </button>
         <button
           className={`btn${showMeta ? ' btn-on' : ''}`}
           onClick={() => setShowMeta((value) => !value)}

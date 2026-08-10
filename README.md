@@ -154,6 +154,11 @@ In the full-screen viewer:
 | `F` / `Enter` | Toggle between fit and zoomed |
 | `+` `−` | Zoom in / out |
 | `0` | Reset to fit |
+| `R` / `Shift`+`R` | Rotate a quarter turn clockwise / anticlockwise |
+
+The **Rotate** button turns the photo on screen only — for a picture the camera got the wrong way
+up. Nothing is written to your photos folder or to the index, so the rotation lasts until you move
+to another photo or close the viewer.
 
 Click anywhere outside the photo to close it. Drag the zoom slider, or use the **Fit** / **1:1**
 buttons. A photo smaller than the window opens at its own size rather than being enlarged, so for

@@ -86,6 +86,15 @@ export const IconZoom = (props: IconProps) => (
   </Svg>
 );
 
+/** A photo frame with an arrow curving over it — "turn this a quarter turn". */
+export const IconRotate = (props: IconProps) => (
+  <Svg {...props}>
+    <path d="M4 21a1 1 0 0 1-1-1v-8a1 1 0 0 1 1-1h8a1 1 0 0 1 1 1v8a1 1 0 0 1-1 1Z" />
+    <path d="M12 6h4a4 4 0 0 1 4 4v1" />
+    <path d="m10 4 2 2-2 2" />
+  </Svg>
+);
+
 export const IconSettings = (props: IconProps) => (
   <Svg {...props}>
     <circle cx="12" cy="12" r="3" />
