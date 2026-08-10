@@ -25,6 +25,12 @@ import { scaleToSlider, sliderToScale, useZoomPan } from './useZoomPan';
 const PRELOAD_RADIUS = 2;
 /** Aspect used before the real dimensions are known. */
 const FALLBACK_ASPECT = 3 / 2;
+/** Travel before a touch drag is claimed as a swipe rather than a pan. */
+const SWIPE_LOCK = 10;
+/** Horizontal travel that commits the swipe, capped against narrow stages. */
+const SWIPE_COMMIT = 60;
+/** Gap between the current photo and the neighbour peeking in behind it. */
+const SWIPE_GAP = 24;
 
 interface LightboxProps {
   manifest: Manifest;
@@ -51,11 +57,20 @@ export function Lightbox({
   /** Filled in when the manifest has no dimensions for this photo. */
   const [measured, setMeasured] = useState<{ width: number; height: number } | null>(null);
 
+  /** How far the photo has been dragged sideways by an in-flight swipe. */
+  const [swipeDx, setSwipeDx] = useState(0);
+  /** True only while an abandoned swipe animates back to centre. */
+  const [settling, setSettling] = useState(false);
+
   const stageRef = useRef<HTMLDivElement>(null);
   const sliderRef = useRef<HTMLInputElement>(null);
   /** Tracks whether the current press turned into a drag, so releasing a pan
    *  over the backdrop does not count as a click-to-close. */
   const press = useRef<{ x: number; y: number; moved: boolean } | null>(null);
+  /** The in-flight swipe, once the gesture has committed to an axis. */
+  const swipe = useRef<{ x: number; y: number; dx: number; axis: 'x' | 'y' | null } | null>(null);
+  /** A second finger means pinch-zoom, which cancels any swipe in progress. */
+  const touches = useRef(0);
 
   const id = manifest.ids[index];
   const manifestWidth = manifest.widths[index] ?? 0;
@@ -108,6 +123,14 @@ export function Lightbox({
   useEffect(() => {
     if (view.zoomed) setWantOriginal(true);
   }, [view.zoomed]);
+
+  // The settle transition is fire-and-forget: it must be off again before the
+  // next zoom or pan, or those would animate too.
+  useEffect(() => {
+    if (!settling) return;
+    const timer = window.setTimeout(() => setSettling(false), 220);
+    return () => window.clearTimeout(timer);
+  }, [settling]);
 
   /**
    * The zoom slider is deliberately *uncontrolled*, and only corrected once the
@@ -186,6 +209,33 @@ export function Lightbox({
     [index, manifest.count, onIndexChange],
   );
 
+  /**
+   * Touch drag across a fitted photo browses the library, the way every phone
+   * gallery does. It is deliberately limited to touch and to the unzoomed
+   * state: a mouse drag on the backdrop is how you dismiss the lightbox, and
+   * once zoomed in the same gesture is panning the photo.
+   */
+  const canSwipe = useCallback(
+    (event: React.PointerEvent): boolean =>
+      event.pointerType !== 'mouse' && manifest.count > 1 && !view.zoomed,
+    [manifest.count, view.zoomed],
+  );
+
+  const endSwipe = useCallback(
+    (commit: boolean) => {
+      const gesture = swipe.current;
+      swipe.current = null;
+      if (!gesture || gesture.axis !== 'x') return;
+
+      setSwipeDx(0);
+      // A short flick counts as much as a slow drag across the whole stage.
+      const distance = Math.min(SWIPE_COMMIT, stage.width * 0.2 || SWIPE_COMMIT);
+      if (commit && Math.abs(gesture.dx) > distance) go(gesture.dx < 0 ? 1 : -1);
+      else setSettling(true);
+    },
+    [go, stage.width],
+  );
+
   const download = useCallback(() => {
     if (id === undefined) return;
     const link = document.createElement('a');
@@ -261,7 +311,7 @@ export function Lightbox({
 
   if (id === undefined) return null;
 
-  const transform = `translate3d(${view.x}px, ${view.y}px, 0) scale(${view.scale})`;
+  const transform = `translate3d(${view.x + swipeDx}px, ${view.y}px, 0) scale(${view.scale})`;
   const imageStyle: React.CSSProperties = {
     width: `${natural.width}px`,
     height: `${natural.height}px`,
@@ -352,7 +402,7 @@ export function Lightbox({
       <div className="lightbox-body">
         <div
           ref={stageRef}
-          className={`lightbox-stage${view.zoomed ? ' zoomed' : ''}${view.panning ? ' panning' : ''}`}
+          className={`lightbox-stage${view.zoomed ? ' zoomed' : ''}${view.panning ? ' panning' : ''}${settling ? ' settling' : ''}`}
           onDoubleClick={(event) => {
             const rect = event.currentTarget.getBoundingClientRect();
             toggleZoom(event.clientX - rect.left, event.clientY - rect.top);
@@ -360,6 +410,14 @@ export function Lightbox({
           {...handlers}
           onPointerDown={(event) => {
             press.current = { x: event.clientX, y: event.clientY, moved: false };
+
+            touches.current += 1;
+            if (touches.current > 1) endSwipe(false);
+            else if (canSwipe(event)) {
+              setSettling(false);
+              swipe.current = { x: event.clientX, y: event.clientY, dx: 0, axis: null };
+            }
+
             handlers.onPointerDown(event);
           }}
           onPointerMove={(event) => {
@@ -367,7 +425,35 @@ export function Lightbox({
             if (start && (Math.abs(event.clientX - start.x) > 4 || Math.abs(event.clientY - start.y) > 4)) {
               start.moved = true;
             }
+
+            const gesture = swipe.current;
+            if (gesture) {
+              const dx = event.clientX - gesture.x;
+              const dy = event.clientY - gesture.y;
+              // Locking the axis once, on the first real movement, stops a
+              // wobbly finger from flip-flopping mid-drag.
+              if (gesture.axis === null && Math.hypot(dx, dy) > SWIPE_LOCK) {
+                gesture.axis = Math.abs(dx) > Math.abs(dy) ? 'x' : 'y';
+              }
+              if (gesture.axis === 'x') {
+                gesture.dx = dx;
+                setSwipeDx(dx);
+                // Withheld from the pan handler, which would fight it.
+                return;
+              }
+            }
+
             handlers.onPointerMove(event);
+          }}
+          onPointerUp={(event) => {
+            touches.current = Math.max(0, touches.current - 1);
+            endSwipe(true);
+            handlers.onPointerUp(event);
+          }}
+          onPointerCancel={(event) => {
+            touches.current = Math.max(0, touches.current - 1);
+            endSwipe(false);
+            handlers.onPointerUp(event);
           }}
           onClick={(event) => {
             // Only the bare backdrop closes: a click that landed on the photo,
@@ -378,6 +464,29 @@ export function Lightbox({
           }}
         >
           {!previewLoaded && <div className="loading-bar" />}
+
+          {/* The neighbours ride along under the finger, so a swipe reads as
+              travelling through the library rather than dragging one photo off
+              into the void. They are drawn before the current photo so it stays
+              on top, and only exist for the duration of the gesture. */}
+          {(swipeDx !== 0 || settling) && manifest.count > 1 && (
+            <>
+              <img
+                className="swipe-peek"
+                src={thumbUrl(manifest.ids[(index - 1 + manifest.count) % manifest.count]!, 1600)}
+                alt=""
+                draggable={false}
+                style={{ transform: `translate3d(${swipeDx - stage.width - SWIPE_GAP}px, 0, 0)` }}
+              />
+              <img
+                className="swipe-peek"
+                src={thumbUrl(manifest.ids[(index + 1) % manifest.count]!, 1600)}
+                alt=""
+                draggable={false}
+                style={{ transform: `translate3d(${swipeDx + stage.width + SWIPE_GAP}px, 0, 0)` }}
+              />
+            </>
+          )}
 
           {/* The 1600px preview appears immediately — it is usually already
               cached from the grid's own thumbnail pipeline. */}

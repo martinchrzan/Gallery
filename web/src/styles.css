@@ -774,6 +774,23 @@ input[type='checkbox'] {
   -webkit-user-drag: none;
 }
 
+/* The neighbours shown mid-swipe. They are sized to the stage and letterboxed
+   rather than transformed like the current photo: their natural dimensions are
+   not always known, and for a gesture that lasts a few hundred milliseconds
+   object-fit gets close enough without the geometry. */
+.swipe-peek {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  pointer-events: none;
+}
+
+/* Only ever set while an abandoned swipe glides back to centre — a standing
+   transition here would also animate every zoom and pan. */
+.lightbox-stage.settling img {
+  transition: transform 0.2s cubic-bezier(0.2, 0, 0, 1);
+}
+
 .lightbox-nav {
   position: absolute;
   top: 50%;
@@ -1348,21 +1365,46 @@ input[type='checkbox'] {
     max-width: none;
   }
 
+  /* Details stack under the photo instead of beside it — and stay *in flow*
+     rather than overlaying the stage, so the stage shrinks to the space that is
+     left. Overlaying put the panel underneath the previous/next arrows, which
+     sit at the vertical centre of the stage and so covered its first rows. */
+  .lightbox-body {
+    flex-direction: column;
+  }
+
+  .lightbox-stage {
+    min-height: 0;
+  }
+
   .lightbox-meta {
-    position: absolute;
-    inset: auto 0 0 0;
-    flex: none;
-    max-height: 55%;
+    flex: 0 1 auto;
+    /* Viewport units rather than a percentage: the panel's containing block is
+       itself a flex item, whose height a percentage cannot always resolve
+       against — and an unresolved cap would let the panel eat the whole stage. */
+    max-height: 45vh;
+    padding: 16px;
     border-left: none;
     border-top: 1px solid rgba(255, 255, 255, 0.08);
   }
 
+  /* No hover on touch, so the arrows are simply always visible. */
   .lightbox-nav {
     opacity: 1;
   }
 
   .year-rail {
     width: 46px;
+  }
+
+  /* Without hover the years sit bare over whatever photo happens to be behind
+     them, so on touch each one keeps its chip permanently. */
+  .year-tick {
+    color: var(--text-dim);
+    background: rgba(255, 255, 255, 0.88);
+    -webkit-backdrop-filter: blur(6px);
+    backdrop-filter: blur(6px);
+    box-shadow: var(--shadow-xs);
   }
 
   .gallery-scroll,
