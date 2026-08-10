@@ -475,8 +475,8 @@ input[type='checkbox'] {
   z-index: 5;
   display: flex;
   align-items: center;
-  padding: 12px 20px 20px;
-  background: linear-gradient(var(--bg) 45%, rgba(255, 255, 255, 0));
+  padding: 12px 20px 8px;
+  background: linear-gradient(var(--bg) 78%, rgba(255, 255, 255, 0));
   font-size: 13px;
   font-weight: 600;
   letter-spacing: -0.01em;
