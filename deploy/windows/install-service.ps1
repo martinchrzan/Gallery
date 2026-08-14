@@ -34,6 +34,9 @@ param(
     # Path to nssm.exe. Defaults to whatever is on PATH.
     [string]$NssmPath = 'nssm',
 
+    # Days of daily log files to keep. 0 keeps them forever.
+    [int]$LogRetentionDays = 30,
+
     # Honour X-Forwarded-* headers. Turn on only behind a reverse proxy/tunnel.
     [switch]$TrustProxy
 )
@@ -214,13 +217,20 @@ if ($existing) {
 
 # Environment always wins over config.json, so the service is self-describing
 # and does not depend on a config.json sitting in the repo.
+#
+# LOG_CONSOLE=false because the server writes its own dated files under
+# logs\ and keeps them pruned; NSSM's capture below would otherwise hold a
+# second, undated copy of every line.
 $envLines = @(
     "PHOTOS_ROOT=$PhotosRoot",
     "DATA_DIR=$DataDir",
     "PORT=$Port",
     "HOST=$BindHost",
     "NODE_ENV=production",
-    "TRUST_PROXY=$($TrustProxy.IsPresent.ToString().ToLower())"
+    "TRUST_PROXY=$($TrustProxy.IsPresent.ToString().ToLower())",
+    "LOG_CONSOLE=false",
+    "LOG_CLEANUP=$(if ($LogRetentionDays -gt 0) { 'true' } else { 'false' })",
+    "LOG_RETENTION_DAYS=$(if ($LogRetentionDays -gt 0) { $LogRetentionDays } else { 30 })"
 )
 & $nssmExe set $ServiceName AppEnvironmentExtra ($envLines -join "`r`n") | Out-Null
 
@@ -234,7 +244,10 @@ $envLines = @(
 & $nssmExe set $ServiceName AppRestartDelay 5000    | Out-Null
 & $nssmExe set $ServiceName AppThrottle 10000       | Out-Null
 
-# Logs, rotated at 16 MB so they cannot fill the disk.
+# What the app logs goes to logs\gallery-<date>.log, written by the app itself.
+# These two only catch what happens outside that - a config error thrown before
+# the logger exists, a native crash - so they stay small. Rotated at 16 MB even
+# so, since nothing prunes them.
 & $nssmExe set $ServiceName AppStdout (Join-Path $logDir 'gallery.out.log') | Out-Null
 & $nssmExe set $ServiceName AppStderr (Join-Path $logDir 'gallery.err.log') | Out-Null
 & $nssmExe set $ServiceName AppRotateFiles 1     | Out-Null
@@ -283,8 +296,15 @@ if (-not $healthy) {
     Write-Host ''
     Write-Warning "'$ServiceName' did not answer on http://localhost:$Port within 45s (service status: $($svc.Status))."
 
-    foreach ($log in @('gallery.err.log', 'gallery.out.log')) {
-        $file = Join-Path $logDir $log
+    # The dated file is where the server logs; the other two hold what died
+    # before it could, which on a failed start is usually the whole story.
+    $today = Get-ChildItem (Join-Path $logDir 'gallery-*.log') -ErrorAction SilentlyContinue |
+        Sort-Object LastWriteTime | Select-Object -Last 1
+    $candidates = @('gallery.err.log', 'gallery.out.log') |
+        ForEach-Object { Join-Path $logDir $_ }
+    if ($today) { $candidates += $today.FullName }
+
+    foreach ($file in $candidates) {
         Write-Host ''
         Write-Host "--- $file (last 40 lines) ---" -ForegroundColor Yellow
         if (Test-Path $file) {
@@ -317,7 +337,8 @@ Write-Host "Service '$ServiceName' is $($svc.Status) and answering on /api/healt
 Write-Host "  URL         http://localhost:$Port"
 Write-Host "  Photos      $PhotosRoot"
 Write-Host "  Data        $DataDir"
-Write-Host "  Logs        $logDir"
+$retention = if ($LogRetentionDays -gt 0) { "kept $LogRetentionDays days" } else { 'kept forever' }
+Write-Host "  Logs        $logDir\gallery-<date>.log (one per day, $retention)"
 Write-Host ''
-Write-Host 'On the very first run the admin access code is printed to gallery.out.log.'
-Write-Host "  Get-Content '$logDir\gallery.out.log' -Tail 40"
+Write-Host "On the very first run the admin access code is printed to today's log."
+Write-Host "  Get-Content '$logDir\gallery-$(Get-Date -Format 'yyyy-MM-dd').log' -Tail 40"

@@ -45,13 +45,26 @@ GALLERY_ADMIN_CODE=my-new-code npm start
 | `host` | Bind address. `0.0.0.0` exposes it to your LAN. | `0.0.0.0` |
 | `dataDir` | Where the index and thumbnail cache live. | `./data` |
 | `trustProxy` | Honour `X-Forwarded-*`. Turn this on behind a tunnel or reverse proxy. | `false` |
+| `logToFile` | Write `<dataDir>/logs/gallery-<date>.log`, one file per day. | `true` |
+| `logConsole` | Also write to stdout. | `true` |
+| `logCleanup` | Delete dated log files once they age out. | `true` |
+| `logRetentionDays` | How many days of them to keep. | `30` |
 | `ffmpegPath` | Explicit ffmpeg binary, for video thumbnails. | bundled, else `PATH` |
 | `ffprobePath` | Explicit ffprobe binary, for video metadata. | bundled, else `PATH` |
 
 Any of these can be overridden by the `PHOTOS_ROOT`, `PORT`, `HOST`, `DATA_DIR`, `TRUST_PROXY`,
-`FFMPEG_PATH` and `FFPROBE_PATH` environment variables, which is handy when running as a service. Everything else — which folders
+`LOG_TO_FILE`, `LOG_CONSOLE`, `LOG_CLEANUP`, `LOG_RETENTION_DAYS`, `FFMPEG_PATH` and `FFPROBE_PATH`
+environment variables, which is handy when running as a service. Everything else — which folders
 feed the gallery, who can see it, how often it re-indexes, row height — is configured in the app's
 Settings page and stored server-side, so it follows you between browsers.
+
+### Logs
+
+The server writes one file per day, `<dataDir>/logs/gallery-2026-08-14.log`, as JSON lines. It moves
+to a new file on the first line logged after midnight and, while it is there, deletes the dated files
+that have fallen outside `logRetentionDays` — so the directory settles at a month of history rather
+than one file that grows forever. Files it did not write are never touched. `LOG_LEVEL` (`info` by
+default; `debug`, `warn`, `error`) sets how much gets in.
 
 ### Development
 
@@ -95,13 +108,19 @@ Two things worth getting right:
   over SMB is also much slower than local disk — running the gallery on the machine that physically
   holds the photos is the faster arrangement by a wide margin.
 
-On the first run the admin access code is printed to `<DataDir>\logs\gallery.out.log`.
+On the first run the admin access code is printed to that day's log, `<DataDir>\logs\gallery-<date>.log`.
+
+Both installers pass `LOG_CONSOLE=false`, so the app's own dated files are the only copy of the log
+and `gallery.out.log` / `gallery.err.log` are left holding just what dies before the logger exists —
+a bad `photosRoot`, a native crash. Pass `-LogRetentionDays` to keep more or less than a month of
+history, or `0` to keep it all.
 
 If `install-service.ps1` reports `Unexpected status SERVICE_START_PENDING in response to START
 control`, NSSM launched Node but the process died before the port opened — NSSM cannot show you
 why. The script's preflight catches the usual causes first (dependencies not installed for that
 copy of the tree, an unreadable `photosRoot`, a port already in use), and on a failed start it
-prints `gallery.err.log` and NSSM's own event-log entries. To see a startup error directly:
+prints those two files, the current day's log and NSSM's own event-log entries. To see a startup
+error directly:
 
 ```powershell
 cd <repo>\server

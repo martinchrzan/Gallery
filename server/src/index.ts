@@ -12,6 +12,7 @@ import { config, repoRoot } from './config.js';
 import { getDb } from './db.js';
 import { authGuard } from './guard.js';
 import { startIndexer, stopIndexer } from './indexer.js';
+import { createLogger, flushLogs } from './logging.js';
 import { PathError } from './paths.js';
 import { initUploads, stopUploads } from './uploads.js';
 import { videoToolStatus } from './video.js';
@@ -26,13 +27,7 @@ async function main(): Promise<void> {
   const cfg = config();
 
   const app = Fastify({
-    logger: {
-      level: process.env.LOG_LEVEL ?? 'info',
-      transport:
-        process.env.NODE_ENV === 'production'
-          ? undefined
-          : { target: 'pino-pretty', options: { translateTime: 'HH:MM:ss', ignore: 'pid,hostname' } },
-    },
+    loggerInstance: await createLogger(cfg),
     bodyLimit: 2 * 1024 * 1024,
     // Photo libraries on spinning disks or network shares can be slow to stat.
     connectionTimeout: 0,
@@ -166,6 +161,13 @@ async function main(): Promise<void> {
     app.log.warn('web/dist not found — run `npm run build` to serve the UI from this server');
   }
 
+  // Said before anything worth reading is logged — including the first-run
+  // access code — so whoever is watching a console knows where the rest went.
+  if (cfg.logToFile) {
+    const kept = cfg.logCleanup ? `kept for ${cfg.logRetentionDays} days` : 'kept indefinitely';
+    app.log.info(`logging to ${path.join(cfg.logDir, 'gallery-<date>.log')}, ${kept}`);
+  }
+
   getDb();
   pruneSessions();
   // Clears `.part` files an upload interrupted by a previous shutdown left in
@@ -211,6 +213,8 @@ async function main(): Promise<void> {
       await destroyImagePool();
       await app.close();
     } finally {
+      // The daily file buffers its writes, and process.exit does not wait.
+      flushLogs();
       process.exit(0);
     }
   };

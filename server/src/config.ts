@@ -13,6 +13,10 @@ const ConfigSchema = z.object({
   host: z.string().default('0.0.0.0'),
   dataDir: z.string().default('./data'),
   trustProxy: z.boolean().default(false),
+  logToFile: z.boolean().default(true),
+  logConsole: z.boolean().default(true),
+  logCleanup: z.boolean().default(true),
+  logRetentionDays: z.number().int().min(1).max(3650).default(30),
   ffmpegPath: z.string().min(1).optional(),
   ffprobePath: z.string().min(1).optional(),
 });
@@ -26,6 +30,24 @@ export interface Config {
   dataDir: string;
   thumbDir: string;
   dbPath: string;
+  /** Absolute path holding one log file per day. */
+  logDir: string;
+  /**
+   * Write `logDir/gallery-<date>.log`. Off leaves logging to the console alone,
+   * for a setup where something else already captures it (a container's log
+   * driver, journald).
+   */
+  logToFile: boolean;
+  /**
+   * Also write to stdout. The service and task installers turn this off, since
+   * their own stdout capture is a single file that nothing ever rotates — the
+   * dated files are the copy worth keeping.
+   */
+  logConsole: boolean;
+  /** Delete dated log files once they fall outside `logRetentionDays`. */
+  logCleanup: boolean;
+  /** Days of history to keep. Ignored when `logCleanup` is off. */
+  logRetentionDays: number;
   /**
    * Honour `X-Forwarded-*` from a reverse proxy or tunnel. Without it the login
    * rate limiter sees every request as coming from the proxy's own address, and
@@ -70,6 +92,12 @@ export function loadConfig(): Config {
     ...(process.env.HOST ? { host: process.env.HOST } : {}),
     ...(process.env.DATA_DIR ? { dataDir: process.env.DATA_DIR } : {}),
     ...(process.env.TRUST_PROXY ? { trustProxy: process.env.TRUST_PROXY === 'true' } : {}),
+    ...(process.env.LOG_TO_FILE ? { logToFile: process.env.LOG_TO_FILE === 'true' } : {}),
+    ...(process.env.LOG_CONSOLE ? { logConsole: process.env.LOG_CONSOLE === 'true' } : {}),
+    ...(process.env.LOG_CLEANUP ? { logCleanup: process.env.LOG_CLEANUP === 'true' } : {}),
+    ...(process.env.LOG_RETENTION_DAYS
+      ? { logRetentionDays: Number(process.env.LOG_RETENTION_DAYS) }
+      : {}),
     ...(process.env.FFMPEG_PATH ? { ffmpegPath: process.env.FFMPEG_PATH } : {}),
     ...(process.env.FFPROBE_PATH ? { ffprobePath: process.env.FFPROBE_PATH } : {}),
   };
@@ -106,7 +134,12 @@ export function loadConfig(): Config {
     dataDir,
     thumbDir: path.join(dataDir, 'thumbs'),
     dbPath: path.join(dataDir, 'gallery.db'),
+    logDir: path.join(dataDir, 'logs'),
     trustProxy: raw.trustProxy,
+    logToFile: raw.logToFile,
+    logConsole: raw.logConsole,
+    logCleanup: raw.logCleanup,
+    logRetentionDays: raw.logRetentionDays,
     ffmpegPath: raw.ffmpegPath ?? null,
     ffprobePath: raw.ffprobePath ?? null,
   };
