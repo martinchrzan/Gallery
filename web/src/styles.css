@@ -1434,6 +1434,12 @@ input[type='checkbox'] {
   display: flex;
   align-items: center;
   gap: 10px;
+  /* Wraps onto a second line rather than overflowing the view. Every button in
+     here is `nowrap`, and how many there are depends on the folder — select all,
+     download folder, new folder, upload — so without this the last of them ends
+     up off the right edge of a phone rather than below the others. */
+  flex-wrap: wrap;
+  justify-content: flex-end;
   margin-left: auto;
 }
 
@@ -1838,6 +1844,19 @@ input[type='checkbox'] {
   .files {
     padding-left: 12px;
     padding-right: 12px;
+  }
+
+  /* A folder with files offers four actions, which at full width need about a
+     third more room than a phone has. The bar is sticky, so every line it wraps
+     onto is a line taken off the grid permanently — the two actions carrying an
+     icon drop their text instead, the same trade the lightbox bar makes, and the
+     set comes back to one row. Their names stay on `aria-label`. */
+  .files-bar .btn {
+    padding: 8px 10px;
+  }
+
+  .files-bar .btn-label {
+    display: none;
   }
 
   /* Shorter tiles here: the strip costs the same band on every screen, and on a

@@ -353,20 +353,26 @@ export function FilesView(): React.ReactElement {
                 </>
               )}
               {/* Both are offered in an empty folder too — that is where they
-                  are needed most, and where there is nothing else to do. */}
+                  are needed most, and where there is nothing else to do. The
+                  labels are a span so a phone can drop them and keep the icon. */}
               <button
                 className="btn"
+                aria-label="New folder"
                 onClick={() => {
                   setNewFolder('');
                   setNaming(true);
                 }}
               >
                 <IconFolderPlus size={15} />
-                New folder
+                <span className="btn-label">New folder</span>
               </button>
-              <button className="btn btn-primary" onClick={() => fileInput.current?.click()}>
+              <button
+                className="btn btn-primary"
+                aria-label="Upload"
+                onClick={() => fileInput.current?.click()}
+              >
                 <IconUpload size={15} />
-                Upload
+                <span className="btn-label">Upload</span>
               </button>
             </>
           )}
