@@ -509,6 +509,19 @@ async function prewarm(signal: { cancelled: boolean }): Promise<void> {
 let scanPromise: Promise<void> | null = null;
 let cancelSignal = { cancelled: false };
 
+/**
+ * The generation a scan in progress is stamping its rows with, or null between
+ * scans.
+ *
+ * `scan_gen` in the database only advances once the walk has finished, so it is
+ * the *previous* generation for as long as a scan is running. Anything indexed
+ * during that window has to read the new generation from here: stamped with the
+ * old one, the row would be deleted by the stale sweep the moment the walk ends,
+ * and a file that is plainly on disk would vanish from the gallery until the
+ * next full scan.
+ */
+let activeGen: number | null = null;
+
 /** Runs a full sweep. Concurrent calls join the in-progress scan. */
 export function scan(): Promise<void> {
   if (scanPromise) return scanPromise;
@@ -519,6 +532,7 @@ export function scan(): Promise<void> {
   scanPromise = (async () => {
     const db = getDb();
     const gen = Number(getMeta('scan_gen') ?? '0') + 1;
+    activeGen = gen;
 
     status.scanning = true;
     status.phase = 'walking';
@@ -566,6 +580,7 @@ export function scan(): Promise<void> {
     } catch (err) {
       status.lastError = (err as Error).message;
     } finally {
+      activeGen = null;
       status.scanning = false;
       status.phase = 'idle';
       emitStatus(true);
@@ -607,10 +622,24 @@ async function indexOne(abs: string): Promise<void> {
     size: stat.size,
     mtime_ms: Math.round(stat.mtimeMs),
     content_key: contentKey(rel, stat.size, stat.mtimeMs),
-    gen: Number(getMeta('scan_gen') ?? '0'),
+    // The generation of the scan in progress if there is one — see {@link activeGen}.
+    gen: activeGen ?? Number(getMeta('scan_gen') ?? '0'),
   });
 
   bumpDataVersion();
+}
+
+/**
+ * Indexes a file the server has just written itself — an upload — so it appears
+ * in the gallery without waiting for the next scan. The watcher would catch it
+ * too, but only in `watch` mode; this path works in all three.
+ *
+ * The extraction pass is scheduled through the same debounce the watcher uses,
+ * so a burst of uploads costs one pass rather than one per file.
+ */
+export async function indexNewFile(abs: string): Promise<void> {
+  await indexOne(abs);
+  scheduleWatchFlush();
 }
 
 async function unindexOne(abs: string): Promise<void> {

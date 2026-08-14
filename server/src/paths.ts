@@ -83,6 +83,45 @@ export class PathError extends Error {
   readonly statusCode = 403;
 }
 
+/** Reserved device names on Windows — a file called `con.jpg` cannot be created. */
+const WINDOWS_RESERVED = /^(con|prn|aux|nul|com[1-9]|lpt[1-9])$/i;
+
+/** Characters no Windows path may contain. `/` and `\` are separators anywhere. */
+const FORBIDDEN_CHARS = '<>:"/|?*';
+
+/**
+ * Reduces a client-supplied name to a single safe path segment — for anything
+ * this server creates inside the library, which today means an uploaded file
+ * and a new folder.
+ *
+ * No directory part survives, nor any separator, nor anything Windows rejects,
+ * and never a dotfile: the scanner, the watcher and the file browser all skip
+ * those, so a name beginning with a dot would land somewhere invisible.
+ *
+ * Returns null when nothing usable is left, so each caller can answer in its
+ * own terms rather than inheriting an error status from here.
+ */
+export function safeSegment(raw: string, maxLength = 150): string | null {
+  const base = path.basename(String(raw).replace(/\\/g, '/'));
+
+  // Character by character rather than a regex: the set to strip includes the
+  // control characters, and a literal NUL in a source file is its own hazard.
+  const cleaned = [...base]
+    .map((ch) => (ch < ' ' || FORBIDDEN_CHARS.includes(ch) ? '_' : ch))
+    .join('')
+    .replace(/^[.\s]+/, '')
+    // Windows silently drops a trailing dot or space, which would leave the
+    // name on disk differing from the one we report back.
+    .replace(/[.\s]+$/, '');
+
+  const suffix = path.extname(cleaned);
+  const ext = suffix.slice(0, 24);
+  const stem = cleaned.slice(0, cleaned.length - suffix.length).slice(0, maxLength).trim();
+  if (stem === '') return null;
+
+  return `${WINDOWS_RESERVED.test(stem) ? `_${stem}` : stem}${ext}`;
+}
+
 /** Normalises a client-supplied relative path to POSIX form with no leading slash. */
 export function toRelPosix(input: string): string {
   return input.replace(/\\/g, '/').replace(/^\/+/, '').replace(/\/+$/, '');

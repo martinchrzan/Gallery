@@ -1306,6 +1306,36 @@ input[type='checkbox'] {
   color: var(--text);
 }
 
+/* The card being named, in the grid where the folder itself will appear — so
+   the new name is typed in the place the result will occupy. */
+.folder-draft {
+  cursor: default;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft), var(--shadow-sm);
+  gap: 8px;
+  padding: 9px 9px 9px 14px;
+}
+
+.folder-draft:hover {
+  transform: none;
+}
+
+.folder-draft input.name {
+  flex: 1;
+  min-width: 0;
+  padding: 4px 0;
+  border: none;
+  background: none;
+  color: inherit;
+  font: inherit;
+  font-weight: 550;
+  letter-spacing: inherit;
+}
+
+.folder-draft input.name:focus {
+  outline: none;
+}
+
 .file-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
@@ -1405,6 +1435,126 @@ input[type='checkbox'] {
   align-items: center;
   gap: 10px;
   margin-left: auto;
+}
+
+/* --------------------------------------------------------------- uploads */
+
+/* The drop target is the whole view, so the cue is too — a small dashed box
+   would be a smaller target than the one the browser actually accepts. */
+.files.dropping {
+  outline: 2px dashed var(--accent);
+  outline-offset: -10px;
+}
+
+.drop-veil {
+  position: fixed;
+  inset: var(--header-h) 0 0;
+  z-index: 150;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  /* Pointer events would take the drop away from the scroller underneath and
+     leave the overlay stuck on screen. */
+  pointer-events: none;
+  background: rgba(255, 255, 255, 0.82);
+  -webkit-backdrop-filter: blur(3px);
+  backdrop-filter: blur(3px);
+  color: var(--accent);
+  font-size: 15px;
+  font-weight: 650;
+}
+
+.upload-panel {
+  position: fixed;
+  right: 20px;
+  bottom: 20px;
+  z-index: 180;
+  width: min(360px, calc(100vw - 32px));
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+  box-shadow: var(--shadow-lg);
+  overflow: hidden;
+}
+
+.upload-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 10px 10px 14px;
+}
+
+.upload-title {
+  flex: 1;
+  min-width: 0;
+  font-size: 13.5px;
+  font-weight: 650;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.upload-bar {
+  height: 3px;
+  background: var(--surface-sunken);
+}
+
+.upload-bar-fill {
+  height: 100%;
+  background: var(--accent);
+  transition: width 0.2s ease;
+}
+
+.upload-list {
+  list-style: none;
+  margin: 0;
+  padding: 4px 0;
+  /* Long queues scroll inside the card rather than growing up the screen. */
+  max-height: 40vh;
+  overflow-y: auto;
+}
+
+.upload-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 10px 5px 14px;
+  font-size: 12.5px;
+}
+
+.upload-row .name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.upload-row .state {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-faint);
+  font-variant-numeric: tabular-nums;
+}
+
+.upload-row.uploading .state {
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.upload-row.error .name,
+.upload-row.error .state {
+  color: var(--danger);
+}
+
+.upload-row.canceled .name,
+.upload-row.done .name {
+  color: var(--text-dim);
 }
 
 /* --------------------------------------------------------------- settings */
@@ -1694,6 +1844,22 @@ input[type='checkbox'] {
      phone that band has to leave the feed underneath it visible. */
   .memories {
     --memory-h: 108px;
+  }
+
+  /* A phone is the likeliest place to be uploading, and a floating card there
+     would sit over the grid at an arbitrary width. Full-bleed at the bottom
+     instead, where a transfer sheet belongs. */
+  .upload-panel {
+    right: 0;
+    left: 0;
+    bottom: 0;
+    width: auto;
+    border-radius: var(--radius) var(--radius) 0 0;
+    border-bottom: none;
+  }
+
+  .upload-list {
+    max-height: 32vh;
   }
 }
 

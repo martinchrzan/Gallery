@@ -122,6 +122,31 @@ export interface BrowseResult {
   files: FileEntry[];
 }
 
+/**
+ * An open upload. The client sends the file as a series of chunks at explicit
+ * offsets, so no single request approaches the body limit a reverse proxy or
+ * tunnel imposes — 100 MB on Cloudflare's free plan, which one phone video
+ * clears on its own.
+ */
+export interface UploadSession {
+  uploadId: string;
+  /** The name the file will be stored under, after sanitising. */
+  name: string;
+  size: number;
+  /** Bytes already on disk. The next chunk must start exactly here. */
+  received: number;
+  /** Chunk size to start with. The client may send less on a slow link. */
+  chunkSize: number;
+  /** The largest chunk the server will accept. */
+  maxChunkSize: number;
+}
+
+/** Where a finished upload landed — the name may carry a ` (1)` suffix. */
+export interface UploadedFile {
+  path: string;
+  name: string;
+}
+
 export interface FolderNode {
   name: string;
   path: string;

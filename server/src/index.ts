@@ -13,6 +13,7 @@ import { getDb } from './db.js';
 import { authGuard } from './guard.js';
 import { startIndexer, stopIndexer } from './indexer.js';
 import { PathError } from './paths.js';
+import { initUploads, stopUploads } from './uploads.js';
 import { videoToolStatus } from './video.js';
 import { destroyImagePool } from './workers/pool.js';
 import { authRoutes } from './routes/auth.js';
@@ -109,8 +110,16 @@ async function main(): Promise<void> {
     if (error instanceof PathError) {
       return reply.code(403).send({ error: error.message });
     }
-    req.log.error({ err: error }, 'request failed');
     const status = error.statusCode && error.statusCode >= 400 ? error.statusCode : 500;
+    // A 4xx is the client being told something about its own request — a chunk
+    // resent at a stale offset, a file type we do not take — and on a flaky
+    // mobile upload it is routine. Only a 5xx is this server's problem, and only
+    // that deserves a stack trace in the log.
+    // `reason` rather than `err`: pino reserves that key for a real Error, which
+    // it renders with its stack — the very thing being left out here.
+    if (status >= 500) req.log.error({ err: error }, 'request failed');
+    else req.log.info({ reason: error.message, status }, 'request refused');
+
     // Internal failures must not leak a filesystem path in their message.
     return reply.code(status).send({ error: status === 500 ? 'Internal error' : error.message });
   });
@@ -159,6 +168,9 @@ async function main(): Promise<void> {
 
   getDb();
   pruneSessions();
+  // Clears `.part` files an upload interrupted by a previous shutdown left in
+  // the library, before the scanner or the browser can trip over them.
+  await initUploads((msg) => app.log.info(`[uploads] ${msg}`));
   // Runs before the port opens, so the server is never reachable without an
   // admin account existing to gate it.
   await ensureAdminUser((msg) => app.log.info(msg));
@@ -192,6 +204,10 @@ async function main(): Promise<void> {
     app.log.info(`${signal} received, shutting down`);
     try {
       await stopIndexer();
+      // In-flight uploads cannot survive the restart — their sessions are held
+      // in memory — so their partial files go now rather than being swept on
+      // the next boot.
+      await stopUploads();
       await destroyImagePool();
       await app.close();
     } finally {

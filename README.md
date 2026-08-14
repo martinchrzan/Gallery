@@ -6,7 +6,9 @@ services, no database server — just Node, SQLite and a folder of pictures.
 - **Gallery** — every photo and video from the folders you choose, in one chronological feed,
   sorted by the date it was taken. Day separators, a year scrubber down the side, and a full-screen
   viewer with zoom.
-- **Files** — the raw folder tree, browsable to any depth, with single-file and ZIP downloads.
+- **Files** — the raw folder tree, browsable to any depth, with single-file and ZIP downloads. New
+  folders, and uploads into any of them — including from a phone, over a tunnel that caps request
+  bodies.
 - **Sharing** — hand someone an access code and they get the gallery for the folders you picked,
   and nothing else.
 
@@ -38,7 +40,7 @@ GALLERY_ADMIN_CODE=my-new-code npm start
 
 | Key | Meaning | Default |
 | --- | --- | --- |
-| `photosRoot` | Folder to serve. Read-only — the gallery never writes here. | *required* |
+| `photosRoot` | Folder to serve. Written to only by an admin's upload; nothing else here modifies it. | *required* |
 | `port` | HTTP port. | `4000` |
 | `host` | Bind address. `0.0.0.0` exposes it to your LAN. | `0.0.0.0` |
 | `dataDir` | Where the index and thumbnail cache live. | `./data` |
@@ -209,8 +211,45 @@ thumbnail bytes.
 segment, resolved against the root, and then re-checked *after* resolving symlinks, so nothing
 outside `photosRoot` can be read. That guard confines requests to the library as a whole, which is
 exactly the boundary a per-viewer folder assignment subdivides — so the path-addressed endpoints
-(browse, download, ZIP, folder tree) are admin-only, and viewers reach the library only through
-id-addressed routes that check their scope.
+(browse, download, ZIP, folder tree, upload) are admin-only, and viewers reach the library only
+through id-addressed routes that check their scope.
+
+**Writing to the library.** The same containment applies in the other direction. Both things an
+admin can create — an uploaded file and a new folder — take their destination through that guard,
+and their name through one shared reduction to a bare path segment: no directory part, no
+separators, nothing Windows forbids, never a dotfile. So all a request can choose is a name and
+which existing folder inside the library it appears in; `a/b/c` creates a folder called `c`, not a
+tree. Folders are made one level at a time and never silently reused — a name already taken is
+reported rather than adopted.
+
+An upload additionally has to be something this gallery has a use for: only photo and video
+extensions are accepted, including the HEIC and RAW types listed under **Supported formats** that
+Files shows but cannot thumbnail. An upload never overwrites either — a name already in use gets
+` (1)` before the extension, the way a file manager does.
+
+A file is not sent as one request. Reverse proxies and tunnels cap a request body — Cloudflare's
+free plan at 100 MB, which one phone video passes without trying — so the client opens a session,
+sends the bytes as a series of chunks at explicit offsets, and then asks for the session to be
+finished. No single request is bigger than one chunk, and a dropped connection costs that chunk
+rather than the whole file: chunks are retried, and a chunk whose reply was lost is answered with
+the offset the server actually reached, so the transfer resumes instead of duplicating bytes.
+Finishing is retried on the same footing and answers the same way twice, so a reply lost at the very
+last step — with every byte already on the server — is not reported as a failed upload. Chunks start
+at 5 MB and follow the connection from there — halving when one drags, doubling while they land
+quickly — because on a slow uplink the limit you hit first is a proxy's *timeout*, not its body
+size.
+
+While it is in flight, the file is staged in its destination folder as a hidden `.upload-*.part`,
+so the last step is a rename inside one filesystem rather than a copy across volumes (`dataDir` is
+meant to be on a different, faster disk than the library). The scanner, the watcher and the file
+browser all skip dotfiles, so a partial upload is invisible until it is complete. Sessions live in
+memory: a restart abandons them, and the partial files are removed on the next boot, along with any
+session nobody has touched for an hour.
+
+A finished upload is indexed immediately rather than waiting for the next scan, so it joins the
+gallery feed within seconds and its thumbnail follows. On a phone, the page holds a screen wake lock
+while a transfer is running — Android suspends a backgrounded tab, which would stall the queue
+mid-file.
 
 ## Supported formats
 

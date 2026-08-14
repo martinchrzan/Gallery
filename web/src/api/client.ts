@@ -1,6 +1,7 @@
 import type {
   AuthState,
   BrowseResult,
+  DirEntry,
   FolderNode,
   IndexStatus,
   MediaKind,
@@ -8,6 +9,8 @@ import type {
   Role,
   Settings,
   StatsResult,
+  UploadedFile,
+  UploadSession,
   User,
   UserWithCode,
 } from '@shared';
@@ -15,6 +18,7 @@ import type {
 export type {
   AuthState,
   BrowseResult,
+  DirEntry,
   FolderNode,
   IndexStatus,
   MediaKind,
@@ -22,6 +26,8 @@ export type {
   Role,
   Settings,
   StatsResult,
+  UploadedFile,
+  UploadSession,
   User,
   UserWithCode,
 };
@@ -92,6 +98,31 @@ export function setUnauthorizedHandler(handler: (() => void) | null): void {
   onUnauthorized = handler;
 }
 
+/**
+ * A failed request, carrying the status so a caller can tell "try again" from
+ * "this will never work" — which is what the upload retry loop decides on.
+ */
+export class RequestError extends Error {
+  constructor(
+    message: string,
+    readonly status: number,
+  ) {
+    super(message);
+  }
+}
+
+/** The server's `{ error }` message for a failed response, or its status line. */
+async function failure(res: Response): Promise<RequestError> {
+  let message = `${res.status} ${res.statusText}`;
+  try {
+    const body = (await res.json()) as { error?: string };
+    if (body.error) message = body.error;
+  } catch {
+    // Non-JSON error body; the status line is all we have.
+  }
+  return new RequestError(message, res.status);
+}
+
 async function jsonRequest<T>(url: string, init?: RequestInit): Promise<T> {
   const res = await fetch(url, {
     ...init,
@@ -101,16 +132,7 @@ async function jsonRequest<T>(url: string, init?: RequestInit): Promise<T> {
     },
   });
   if (res.status === 401) onUnauthorized?.();
-  if (!res.ok) {
-    let message = `${res.status} ${res.statusText}`;
-    try {
-      const body = (await res.json()) as { error?: string };
-      if (body.error) message = body.error;
-    } catch {
-      // Non-JSON error body; the status line is all we have.
-    }
-    throw new Error(message);
-  }
+  if (!res.ok) throw await failure(res);
   return (await res.json()) as T;
 }
 
@@ -185,6 +207,9 @@ export const api = {
 
   folderTree: (signal?: AbortSignal) => jsonRequest<FolderNode>('/api/folders/tree', { signal }),
 
+  createFolder: (input: { path: string; name: string }) =>
+    jsonRequest<DirEntry>('/api/files/folder', { method: 'POST', body: JSON.stringify(input) }),
+
   settings: (signal?: AbortSignal) => jsonRequest<Settings>('/api/settings', { signal }),
 
   saveSettings: (patch: Partial<Settings>) =>
@@ -197,7 +222,57 @@ export const api = {
   rescan: () => jsonRequest<{ started: boolean }>('/api/index/rescan', { method: 'POST' }),
 
   clearCache: () => jsonRequest<{ cleared: boolean }>('/api/cache/clear', { method: 'POST' }),
+
+  uploadInit: (input: { path: string; name: string; size: number }) =>
+    jsonRequest<UploadSession>('/api/files/upload', {
+      method: 'POST',
+      body: JSON.stringify(input),
+    }),
+
+  uploadFinish: (uploadId: string) =>
+    jsonRequest<UploadedFile>(`/api/files/upload/${uploadId}/finish`, { method: 'POST' }),
+
+  uploadAbort: (uploadId: string) =>
+    jsonRequest<{ aborted: boolean }>(`/api/files/upload/${uploadId}`, { method: 'DELETE' }),
 };
+
+/**
+ * Sends one chunk and returns how many bytes the server now holds.
+ *
+ * A 409 is not treated as a failure: it means the chunk landed but its reply
+ * was lost — a routine event on a phone changing cells — and the body says
+ * where the server actually is, which is exactly what the caller needs to
+ * carry on from.
+ */
+export async function uploadChunk(
+  uploadId: string,
+  offset: number,
+  chunk: Blob,
+  signal?: AbortSignal,
+): Promise<number> {
+  const res = await fetch(`/api/files/upload/${uploadId}/chunk?offset=${offset}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/octet-stream' },
+    body: chunk,
+    signal,
+  });
+
+  if (res.status === 401) onUnauthorized?.();
+
+  if (res.status === 409) {
+    const body = (await res.json().catch(() => ({}))) as {
+      error?: string;
+      expectedOffset?: number;
+    };
+    if (typeof body.expectedOffset === 'number') return body.expectedOffset;
+    throw new RequestError(body.error ?? 'Upload conflict', 409);
+  }
+
+  if (!res.ok) throw await failure(res);
+
+  const body = (await res.json()) as { received: number };
+  return body.received;
+}
 
 /* ------------------------------------------------------------------ urls -- */
 

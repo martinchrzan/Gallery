@@ -165,6 +165,25 @@ export const IconCopy = (props: IconProps) => (
   </Svg>
 );
 
+export const IconCheck = (props: IconProps) => (
+  <Svg {...props}>
+    <path d="M20 6 9 17l-5-5" />
+  </Svg>
+);
+
+export const IconFolderPlus = (props: IconProps) => (
+  <Svg {...props}>
+    <path d="M4 20a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h5l2 3h7a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H4Z" />
+    <path d="M12 11v6M9 14h6" />
+  </Svg>
+);
+
+export const IconUpload = (props: IconProps) => (
+  <Svg {...props}>
+    <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M17 8l-5-5-5 5M12 3v12" />
+  </Svg>
+);
+
 export const IconArchive = (props: IconProps) => (
   <Svg {...props}>
     <path d="M3 8h18v11a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1Z" />

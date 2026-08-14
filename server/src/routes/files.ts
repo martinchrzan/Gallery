@@ -1,10 +1,13 @@
 import type { Dirent } from 'node:fs';
 import fsp from 'node:fs/promises';
 import path from 'node:path';
+import type { Readable } from 'node:stream';
 import archiver from 'archiver';
 import type { FastifyInstance } from 'fastify';
+import { z } from 'zod';
 import { getDb, KIND_VIDEO } from '../db.js';
 import { requireAdmin } from '../guard.js';
+import { indexNewFile } from '../indexer.js';
 import {
   isIgnoredDir,
   isIndexableMedia,
@@ -13,8 +16,18 @@ import {
   PathError,
   realpathWithin,
   resolveWithinRoot,
+  safeSegment,
 } from '../paths.js';
-import type { BrowseResult, DirEntry, FileEntry, FolderNode } from '../types.js';
+import type { BrowseResult, DirEntry, FileEntry, FolderNode, UploadSession } from '../types.js';
+import {
+  abortUpload,
+  CHUNK_BYTES,
+  createUpload,
+  finishUpload,
+  MAX_CHUNK_BYTES,
+  OffsetMismatch,
+  writeChunk,
+} from '../uploads.js';
 import { contentDisposition, mimeFor, sendFile } from './media.js';
 
 interface IndexedRow {
@@ -39,6 +52,15 @@ export async function filesRoutes(app: FastifyInstance): Promise<void> {
    * not get the Files view at all.
    */
   app.addHook('preHandler', requireAdmin);
+
+  /**
+   * Upload chunks arrive as raw bytes, handed to the route as a stream rather
+   * than buffered into memory first — a chunk goes straight from the socket to
+   * the file. Registered inside this plugin, so it applies to these routes only.
+   */
+  app.addContentTypeParser('application/octet-stream', (_req, payload, done) => {
+    done(null, payload);
+  });
 
   /** One directory level: subfolders plus files, with photo ids where indexed. */
   app.get<{ Querystring: { path?: string } }>('/api/files/browse', async (req, reply) => {
@@ -202,7 +224,150 @@ export async function filesRoutes(app: FastifyInstance): Promise<void> {
     const tree = await build('', 'All photos');
     return reply.header('Cache-Control', 'no-store').send(tree);
   });
+
+  /**
+   * Creates one folder inside the library.
+   *
+   * One level only, and the name goes through the same segment guard an upload's
+   * does: what a request may choose is a name, never a path. Nothing is created
+   * recursively, so a typo cannot conjure a tree.
+   */
+  app.post<{ Body: unknown }>('/api/files/folder', async (req, reply) => {
+    const parsed = NewFolder.safeParse(req.body);
+    if (!parsed.success) return reply.code(400).send({ error: 'Invalid folder request' });
+
+    const name = safeSegment(parsed.data.name);
+    if (name === null) return reply.code(400).send({ error: 'That folder name cannot be used' });
+
+    const { rel, abs } = resolveWithinRoot(parsed.data.path);
+    const parent = await realpathWithin(abs);
+    if (!(await fsp.stat(parent)).isDirectory()) {
+      return reply.code(400).send({ error: 'The destination is not a folder' });
+    }
+
+    try {
+      // Not `recursive`: that succeeds silently on a folder that already exists,
+      // and here the client is told so instead.
+      await fsp.mkdir(path.join(parent, name));
+    } catch (err) {
+      const code = (err as NodeJS.ErrnoException).code;
+      if (code === 'EEXIST') {
+        return reply.code(409).send({ error: `“${name}” already exists here` });
+      }
+      return reply.code(403).send({ error: `Cannot create a folder here (${code ?? 'error'})` });
+    }
+
+    const created: DirEntry = { name, path: rel ? `${rel}/${name}` : name };
+    return reply.send(created);
+  });
+
+  /* ---------------------------------------------------------------- upload */
+
+  /**
+   * Opens an upload session for one file.
+   *
+   * Everything that can be checked before a byte is sent is checked here — the
+   * name, the extension, the destination folder, whether that folder can be
+   * written to at all — because the alternative is telling someone their video
+   * cannot be stored after they have spent ten minutes on a phone sending it.
+   */
+  app.post<{ Body: unknown }>('/api/files/upload', async (req, reply) => {
+    const parsed = UploadInit.safeParse(req.body);
+    if (!parsed.success) return reply.code(400).send({ error: 'Invalid upload request' });
+
+    const handle = await createUpload({
+      dir: parsed.data.path,
+      name: parsed.data.name,
+      size: parsed.data.size,
+    });
+
+    const session: UploadSession = {
+      ...handle,
+      chunkSize: CHUNK_BYTES,
+      maxChunkSize: MAX_CHUNK_BYTES,
+    };
+    return reply.header('Cache-Control', 'no-store').send(session);
+  });
+
+  /**
+   * One chunk, at an explicit byte offset.
+   *
+   * A mismatched offset is answered with where the server actually is, so a
+   * client whose chunk landed but whose response was lost resumes from the
+   * right place instead of duplicating or skipping bytes.
+   *
+   * No `bodyLimit` here, and the app-wide one does not apply either: Fastify
+   * enforces those while buffering a body into a string or a buffer, which is
+   * exactly what the parser above declines to do. The ceiling on a chunk is held
+   * in two places instead — the header check below, and `writeChunk` counting
+   * the bytes as they arrive.
+   */
+  app.post<{ Params: { id: string }; Querystring: { offset?: string } }>(
+    '/api/files/upload/:id/chunk',
+    async (req, reply) => {
+      const offset = Number(req.query.offset ?? '0');
+
+      // Refused on the declared length, before a byte is read. `writeChunk`
+      // catches an oversized body too, but only by destroying the stream part
+      // way through, which reaches the client as a dropped connection rather
+      // than as an answer it can do anything with. Its check stays as the
+      // backstop for a body that lies about its length or omits one.
+      const declared = Number(req.headers['content-length']);
+      if (Number.isFinite(declared) && declared > MAX_CHUNK_BYTES) {
+        return reply.code(413).send({ error: 'Chunk is too large' });
+      }
+
+      try {
+        const handle = await writeChunk(req.params.id, offset, req.body as Readable);
+        return reply.header('Cache-Control', 'no-store').send(handle);
+      } catch (err) {
+        if (err instanceof OffsetMismatch) {
+          return reply
+            .code(409)
+            .send({ error: err.message, expectedOffset: err.expectedOffset });
+        }
+        throw err;
+      }
+    },
+  );
+
+  /** Moves a completed upload into the library and indexes it immediately. */
+  app.post<{ Params: { id: string } }>('/api/files/upload/:id/finish', async (req, reply) => {
+    const file = await finishUpload(req.params.id);
+
+    // Best-effort: the file is in the library either way, and the next scan
+    // would find it. Failing the request here would tell the client its upload
+    // did not happen, which would be a lie.
+    await indexNewFile(file.abs).catch((err: Error) =>
+      req.log.warn({ err }, 'could not index an uploaded file'),
+    );
+
+    return reply.send({ path: file.rel, name: file.name });
+  });
+
+  /** Cancels a session and discards its partial file. */
+  app.delete<{ Params: { id: string } }>('/api/files/upload/:id', async (req, reply) => {
+    await abortUpload(req.params.id);
+    return reply.send({ aborted: true });
+  });
 }
+
+const NewFolder = z
+  .object({
+    /** The folder to create it in, relative to the library root. */
+    path: z.string().max(4096).optional(),
+    name: z.string().min(1).max(200),
+  })
+  .strict();
+
+const UploadInit = z
+  .object({
+    /** Destination folder, relative to the library root. Omitted means the root. */
+    path: z.string().max(4096).optional(),
+    name: z.string().min(1).max(400),
+    size: z.number().int().nonnegative(),
+  })
+  .strict();
 
 /**
  * The ZIP endpoint accepts either a JSON body or a form-encoded `payload`
