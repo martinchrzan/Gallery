@@ -13,7 +13,13 @@ import path from 'node:path';
 import { afterAll } from 'vitest';
 import { closeDb } from '../src/db.js';
 
-const root = fs.mkdtempSync(path.join(os.tmpdir(), 'gallery-test-'));
+// Resolved the same way `config()` resolves photosRoot, because the tests compare
+// the two. On the GitHub Windows runner `os.tmpdir()` is the 8.3 short form
+// (C:\Users\RUNNER~1\...), which `realpathSync.native` expands to the long name
+// (C:\Users\runneradmin\...) — so an unresolved root here disagrees with the one
+// every source module sees. macOS has the same hazard: /var is a symlink to
+// /private/var.
+const root = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), 'gallery-test-')));
 
 export const TEST_PHOTOS_ROOT = path.join(root, 'photos');
 export const TEST_DATA_DIR = path.join(root, 'data');
