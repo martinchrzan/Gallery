@@ -44,7 +44,7 @@ const CODE_GROUP = 4;
 const SCRYPT = { N: 16384, r: 8, p: 1, maxmem: 64 * 1024 * 1024 } as const;
 const SCRYPT_KEYLEN = 32;
 
-export const SESSION_COOKIE = 'gallery_sid';
+const SESSION_COOKIE = 'gallery_sid';
 const SESSION_TTL_MS = 30 * 24 * 60 * 60 * 1000;
 
 /* ----------------------------------------------------------------- codes -- */
@@ -222,7 +222,7 @@ function createSession(userId: number): string {
   return id;
 }
 
-export function destroySession(id: string): void {
+function destroySession(id: string): void {
   getDb().prepare('DELETE FROM sessions WHERE id = ?').run(id);
 }
 

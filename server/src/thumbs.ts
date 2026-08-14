@@ -35,7 +35,7 @@ export class ThumbError extends Error {
 /** Coalesces concurrent requests for the same thumbnail onto one render. */
 const inFlight = new Map<string, Promise<string>>();
 
-export function thumbPath(contentKey: string, size: ThumbSize): string {
+function thumbPath(contentKey: string, size: ThumbSize): string {
   return path.join(config().thumbDir, String(size), contentKey.slice(0, 2), `${contentKey}.webp`);
 }
 

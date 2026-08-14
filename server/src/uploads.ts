@@ -249,11 +249,6 @@ export async function createUpload(input: {
   return toHandle(session);
 }
 
-export function getUpload(id: string): UploadHandle | null {
-  const session = sessions.get(id);
-  return session ? toHandle(session) : null;
-}
-
 function sessionOrThrow(id: string): Session {
   const session = sessions.get(id);
   if (!session) {
@@ -432,7 +427,7 @@ export async function abortUpload(id: string): Promise<void> {
  * forgets the results of uploads finished long enough ago that no client is
  * still retrying them.
  */
-export function sweepUploads(): void {
+function sweepUploads(): void {
   const idleCutoff = Date.now() - SESSION_IDLE_MS;
   for (const session of sessions.values()) {
     if (!session.busy && session.touchedAt < idleCutoff) void abortUpload(session.id);

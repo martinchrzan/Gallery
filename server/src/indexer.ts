@@ -591,7 +591,7 @@ export function scan(): Promise<void> {
   return scanPromise;
 }
 
-export function cancelScan(): void {
+function cancelScan(): void {
   cancelSignal.cancelled = true;
 }
 

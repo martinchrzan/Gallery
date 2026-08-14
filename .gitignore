@@ -4,3 +4,9 @@ data/
 config.json
 *.log
 .DS_Store
+
+# Test output. The generated photo libraries live in the system temp directory,
+# so nothing of theirs reaches here.
+playwright-report/
+test-results/
+coverage/

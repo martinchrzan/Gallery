@@ -81,7 +81,7 @@ function readConfigFile(): unknown {
   return {};
 }
 
-export function loadConfig(): Config {
+function loadConfig(): Config {
   const fromFile = readConfigFile() as Record<string, unknown>;
 
   // Environment always wins over the file, so a service unit can override it.

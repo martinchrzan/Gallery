@@ -56,7 +56,8 @@ const EXIF_OPTIONS = {
 } as const;
 
 /** `2019-07-04 13:22:31` / `20190704_132231` / `IMG-20190704-WA0001` style names. */
-const FILENAME_DATE = /(19|20)(\d{2})[-_.]?(\d{2})[-_.]?(\d{2})(?:[-_.T]?(\d{2})[-_.:]?(\d{2})[-_.:]?(\d{2}))?/;
+const FILENAME_DATE =
+  /(19|20)(\d{2})[-_.]?(\d{2})[-_.]?(\d{2})(?:[-_.T ]?(\d{2})[-_.:]?(\d{2})[-_.:]?(\d{2}))?/;
 
 /**
  * Recovers a date from the filename when EXIF has none — very common for

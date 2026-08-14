@@ -1,4 +1,3 @@
-import fs from 'node:fs';
 import fsp from 'node:fs/promises';
 import path from 'node:path';
 import { config } from './config.js';
@@ -188,16 +187,6 @@ export async function realpathWithin(abs: string): Promise<string> {
     throw new PathError('Path escapes the photo root');
   }
   return real;
-}
-
-/** Synchronous variant for the scanner's hot loop. */
-export function realpathWithinSync(abs: string): string | null {
-  try {
-    const real = fs.realpathSync.native(abs);
-    return isInside(config().photosRoot, real) ? real : null;
-  } catch {
-    return null;
-  }
 }
 
 /** Absolute on-disk path for a stored relative path. */

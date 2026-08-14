@@ -66,6 +66,20 @@ export function getDb(): Database.Database {
   return instance;
 }
 
+/**
+ * Closes the database, checkpointing the WAL on the way out.
+ *
+ * SQLite recovers from an abrupt exit on its own, so this is not a correctness
+ * requirement — but it leaves no `-wal` file behind after a clean shutdown, and
+ * it lets a test delete its temporary data directory on Windows, where an open
+ * handle blocks the unlink.
+ */
+export function closeDb(): void {
+  if (!db) return;
+  db.close();
+  db = null;
+}
+
 function migrate(instance: Database.Database): void {
   instance.exec(`
     CREATE TABLE IF NOT EXISTS photos (

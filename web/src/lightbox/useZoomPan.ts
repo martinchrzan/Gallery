@@ -1,6 +1,6 @@
 ﻿import { useCallback, useEffect, useRef, useState } from 'react';
 
-export const MAX_SCALE = 8;
+const MAX_SCALE = 8;
 
 /**
  * Maps a zoom level onto the 0–1 slider position and back, logarithmically so
