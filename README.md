@@ -5,7 +5,7 @@ services, no database server — just Node, SQLite and a folder of photos.
 
 [![CI](https://github.com/martinchrzan/Gallery/actions/workflows/ci.yml/badge.svg)](https://github.com/martinchrzan/Gallery/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-[![Node](https://img.shields.io/badge/node-%E2%89%A520-brightgreen.svg)](https://nodejs.org)
+[![Node](https://img.shields.io/badge/node-%E2%89%A522-brightgreen.svg)](https://nodejs.org)
 
 ![The gallery](docs/images/demo.gif)
 
@@ -89,7 +89,7 @@ survive a flaky connection.
 
 ## Getting started
 
-You need [Node 20 or newer](https://nodejs.org).
+You need [Node 22 or newer](https://nodejs.org) — `better-sqlite3` requires it.
 
 ```bash
 git clone https://github.com/martinchrzan/Gallery.git
