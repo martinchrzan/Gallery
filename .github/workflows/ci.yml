@@ -30,7 +30,13 @@ jobs:
           node-version: 22
           cache: npm
 
-      - run: npm ci
+      # --ignore-scripts: nothing here needs an install script, and without it
+      # npm runs an implicit `node-gyp rebuild` on better-sqlite3 because it has
+      # a binding.gyp. That build is pure waste -- better-sqlite3 13 ships
+      # prebuilds/<platform>.node and loads it directly -- and on windows-latest
+      # it now fails outright, since the image's only Visual Studio is v18,
+      # which the bundled node-gyp cannot identify.
+      - run: npm ci --ignore-scripts
 
       - name: Typecheck
         run: npm run typecheck
@@ -49,7 +55,7 @@ jobs:
           node-version: 22
           cache: npm
 
-      - run: npm ci
+      - run: npm ci --ignore-scripts
 
       # The suite runs the built server, exactly as `npm start` does.
       - name: Build
