@@ -11,19 +11,9 @@ import { getThumb, isThumbSize, ThumbError } from '../thumbs.js';
 /**
  * How long a browser may reuse a media response without asking again.
  *
- * These URLs are keyed by photo id, and a photo id is *not* a permanent name
- * for a file: `photos.id` is a plain SQLite rowid, a scan deletes the rows of
- * files that have gone, and a later insert takes the freed number — to say
- * nothing of a rebuilt index, where every id is reassigned at once. So the
- * bytes behind `/api/media/7/thumb` can change identity, and the `immutable`
- * this used to send was a promise the server cannot keep: browsers held the
- * previous occupant's picture for a year and never revalidated, which is how a
- * tile ends up opening a photo that is nothing like the one it shows.
- *
- * A minute is long enough that scrolling back up a feed — which remounts tiles
- * the virtualiser had dropped — still costs nothing, and short enough that a
- * remapped id corrects itself before anyone can puzzle over it. Past that the
- * ETag makes revalidation a bodiless 304.
+ * Deliberately not `immutable`: these URLs are keyed by photo id, and an id is
+ * a plain rowid that a rescan can hand to a different file entirely. Past this
+ * the ETag makes revalidation a bodiless 304.
  */
 const MEDIA_MAX_AGE = 60;
 
@@ -132,10 +122,8 @@ export async function sendFile(
 export async function mediaRoutes(app: FastifyInstance): Promise<void> {
   /**
    * Cached WebP thumbnail. Generated on first request and kept on disk from
-   * then on: the *disk* key includes the file's size and mtime, so an edited
-   * photo lands on a different file rather than overwriting one. What a browser
-   * may assume about the id in the URL is a separate question — see
-   * {@link MEDIA_MAX_AGE}.
+   * then on, under a key that includes the file's size and mtime — so an edited
+   * photo lands on a different file rather than overwriting one.
    */
   app.get<{ Params: { id: string }; Querystring: { h?: string } }>(
     '/api/media/:id/thumb',

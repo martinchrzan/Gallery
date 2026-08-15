@@ -42,28 +42,14 @@ export function MemoriesStrip({
   const [onScreen, setOnScreen] = useState(false);
   /** Timestamp until which the slideshow keeps out of the user's way. */
   const pausedUntil = useRef(0);
-  /**
-   * Which tile the current press landed on, and where the finger was.
-   *
-   * The rail can still be gliding when a finger arrives on it, and the browser
-   * hit-tests the resulting click where the finger *lifts* — so the tap would
-   * otherwise open whichever photo had slid into that spot by then, which is
-   * never the one that was pressed.
-   */
+  /** Which tile the current press landed on, and where the finger was. */
   const pressed = useRef<{ index: number; x: number; y: number } | null>(null);
 
   const hold = useCallback(() => {
     pausedUntil.current = Date.now() + PAUSE_AFTER_INPUT;
   }, []);
 
-  /**
-   * Stops the rail dead, rather than merely keeping the next step away.
-   *
-   * `hold` only silences the interval; a smooth scroll already in flight — the
-   * auto-advance's, or the browser settling a flick onto a snap point — carries
-   * on animating regardless, and that is what moves the tiles out from under
-   * the finger. Re-issuing the position the rail is at, instantly, aborts it.
-   */
+  /** Stops the rail dead: `hold` alone leaves a scroll already in flight running. */
   const freeze = useCallback(() => {
     hold();
     const track = trackRef.current;
@@ -170,19 +156,17 @@ export function MemoriesStrip({
                   pressed.current = { index: memory.index, x: event.clientX, y: event.clientY };
                 }}
                 onClick={(event) => {
-                  // `detail` is 0 for a keyboard activation, which has no press
-                  // to anchor to and cannot have landed on the wrong tile.
+                  // A keyboard activation reports detail 0 and has no press.
                   const press = event.detail === 0 ? null : pressed.current;
                   pressed.current = null;
                   if (
                     press &&
                     Math.hypot(event.clientX - press.x, event.clientY - press.y) > TAP_SLOP
                   ) {
-                    // The finger travelled: that was a scroll of the rail.
                     return;
                   }
-                  // The tile that was *pressed*, not the one the release
-                  // happened to be over — see `pressed`.
+                  // The tile pressed, not the one the release landed on: the
+                  // rail can move between the two.
                   onOpen(press?.index ?? memory.index);
                 }}
                 title={`${years} — ${formatDateTime(memory.time * 1000)}`}

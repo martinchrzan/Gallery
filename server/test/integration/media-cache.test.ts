@@ -1,12 +1,6 @@
 /**
- * What a browser is allowed to assume about `/api/media/:id/...`.
- *
- * The URL names a photo by id, and an id is not a permanent name for a file:
- * `photos.id` is a plain rowid, a scan deletes the rows of files that have gone
- * and a later insert takes the freed number — and a rebuilt index reassigns
- * every id at once. A response that claimed to be immutable therefore poisoned
- * the browser's cache for a year, and a tile would show one photo and open a
- * completely different one.
+ * What a browser is allowed to assume about `/api/media/:id/...`, given that a
+ * rescan can hand an id to a different file.
  */
 
 import type { FastifyInstance } from 'fastify';
@@ -48,7 +42,6 @@ it('never promises a thumbnail is immutable', async () => {
   expect(cache).not.toContain('immutable');
   expect(cache).toContain('private');
 
-  // Bounded, so a reassigned id corrects itself rather than sticking for a year.
   const maxAge = Number(/max-age=(\d+)/.exec(cache)?.[1]);
   expect(maxAge).toBeGreaterThan(0);
   expect(maxAge).toBeLessThanOrEqual(3600);
@@ -69,17 +62,13 @@ it('changes its validator when an id comes to mean a different file', async () =
   expect(first.statusCode).toBe(200);
   const before = String(first.headers.etag);
 
-  // Exactly what a rescan does when the file behind this row goes away and the
-  // number is handed to another one: same id, a different photo entirely. Aimed
-  // at a file that really is in the library, so the response is a rendered
-  // thumbnail rather than the 415 a dangling row would give.
+  // Another file the library really has, so this still renders a thumbnail.
   const other = getDb()
     .prepare('SELECT id, rel_path, name, content_key FROM photos WHERE id <> ? LIMIT 1')
     .get(photoId) as { id: number; rel_path: string; name: string; content_key: string };
 
   getDb().transaction(() => {
-    // `rel_path` is unique, so the file has to leave its old row before it can
-    // arrive at this one — which is the order a rescan does it in anyway.
+    // `rel_path` is unique, so it has to leave its old row first.
     getDb().prepare('DELETE FROM photos WHERE id = ?').run(other.id);
     getDb()
       .prepare('UPDATE photos SET rel_path = ?, name = ?, content_key = ? WHERE id = ?')
@@ -90,8 +79,7 @@ it('changes its validator when an id comes to mean a different file', async () =
   expect(second.statusCode).toBe(200);
   expect(String(second.headers.etag)).not.toBe(before);
 
-  // And the copy the browser is holding is refused, so it refetches rather than
-  // going on showing the photo that used to live at this id.
+  // The copy the browser holds is refused, so it refetches.
   const stale = await thumb({ 'if-none-match': before });
   expect(stale.statusCode).toBe(200);
 });

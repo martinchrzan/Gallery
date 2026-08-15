@@ -94,7 +94,28 @@ test.describe('the year rail', () => {
       .poll(async () => scroller.evaluate((el) => el.scrollTop))
       .toBeGreaterThan(0);
   });
+
+  test('highlights the year the feed is showing, the oldest one included', async ({ page }) => {
+    const ticks = page.locator('.year-tick');
+    const years = (await ticks.allTextContents()).map((y) => y.trim());
+
+    await expect(page.locator('.year-tick.current')).toHaveText(years[0]!);
+
+    // The oldest label sits at a clamped position, which is where the highlight
+    // used to stop being able to reach it.
+    await scrollToEnd(page);
+    await expect(page.locator('.year-tick.current')).toHaveText(years[years.length - 1]!);
+  });
 });
+
+/** Scrolls the feed to the bottom and waits for the view to settle there. */
+async function scrollToEnd(page: import('@playwright/test').Page): Promise<void> {
+  const scroller = page.locator('.gallery-scroll');
+  await scroller.evaluate((el) => el.scrollTo({ top: el.scrollHeight, behavior: 'auto' }));
+  await expect
+    .poll(async () => scroller.evaluate((el) => el.scrollHeight - el.clientHeight - el.scrollTop))
+    .toBeLessThanOrEqual(1);
+}
 
 test.describe('on this day', () => {
   test('shows the strip, since the fixture has anniversary photos', async ({ page }) => {

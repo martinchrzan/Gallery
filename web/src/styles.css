@@ -315,8 +315,7 @@ input[type='checkbox'] {
   box-shadow: var(--shadow-xs);
 }
 
-/* The topbar is a fixed-height row, so a count long enough to wrap would put
-   its second line outside the bar rather than making it taller. */
+/* The bar has a fixed height: a wrapped count would spill out of it. */
 .topbar .pill {
   flex: 0 0 auto;
   white-space: nowrap;
@@ -680,10 +679,12 @@ input[type='checkbox'] {
 
 /* Year scrubber rail */
 
+/* Labels are centred on their positions, so the inset also covers the half that
+   hangs past each end. YearRail measures it rather than assuming it. */
 .year-rail {
   position: absolute;
-  top: 12px;
-  bottom: 12px;
+  top: 16px;
+  bottom: 16px;
   right: 4px;
   width: 60px;
   z-index: 6;
@@ -1627,10 +1628,7 @@ input[type='checkbox'] {
   padding-bottom: 0;
 }
 
-/* The label column, which is the one that gives way when the row is squeezed.
-   A flex item will not shrink below its own longest unbreakable word, and the
-   watch warning quotes a filesystem path — so without this the row grows wider
-   than the card, and the settings page gains a horizontal scrollbar on a phone. */
+/* Lets the label column shrink below its longest unbreakable word. */
 .field > :first-child {
   min-width: 0;
 }
@@ -1646,9 +1644,7 @@ input[type='checkbox'] {
   font-weight: 400;
   margin-top: 3px;
   max-width: 52ch;
-  /* Paths and error strings have nowhere to break; let them break anywhere
-     rather than run off the side. Inherited, so it reaches the raw message
-     nested inside too. */
+  /* Paths and error strings have nowhere else to break. */
   overflow-wrap: anywhere;
 }
 
@@ -1775,10 +1771,8 @@ input[type='checkbox'] {
     display: none;
   }
 
-  /* Indexing progress is reported twice while a scan runs: here, and on the
-     pill floating over the gallery. The topbar is a fixed-height row with no
-     slack left on a phone, so its copy wraps onto a second line and spills out
-     of the bar — and it is the less useful of the two, being a bare count. */
+  /* The pill floating over the gallery already reports the scan, and there is
+     no slack up here for a second line. */
   .topbar .pill {
     display: none;
   }
@@ -1853,6 +1847,10 @@ input[type='checkbox'] {
 
   .year-rail {
     width: 46px;
+    /* Deeper: the touch chips below are taller, and half of one hangs past
+       each end of the rail. */
+    top: 20px;
+    bottom: 20px;
   }
 
   /* Without hover the years sit bare over whatever photo happens to be behind
