@@ -8,6 +8,25 @@ import { absFromRel, realpathWithin } from '../paths.js';
 import { accessScope, dirAllowed } from '../scope.js';
 import { getThumb, isThumbSize, ThumbError } from '../thumbs.js';
 
+/**
+ * How long a browser may reuse a media response without asking again.
+ *
+ * These URLs are keyed by photo id, and a photo id is *not* a permanent name
+ * for a file: `photos.id` is a plain SQLite rowid, a scan deletes the rows of
+ * files that have gone, and a later insert takes the freed number — to say
+ * nothing of a rebuilt index, where every id is reassigned at once. So the
+ * bytes behind `/api/media/7/thumb` can change identity, and the `immutable`
+ * this used to send was a promise the server cannot keep: browsers held the
+ * previous occupant's picture for a year and never revalidated, which is how a
+ * tile ends up opening a photo that is nothing like the one it shows.
+ *
+ * A minute is long enough that scrolling back up a feed — which remounts tiles
+ * the virtualiser had dropped — still costs nothing, and short enough that a
+ * remapped id corrects itself before anyone can puzzle over it. Past that the
+ * ETag makes revalidation a bodiless 304.
+ */
+const MEDIA_MAX_AGE = 60;
+
 const MIME_BY_EXT: Record<string, string> = {
   '.jpg': 'image/jpeg',
   '.jpeg': 'image/jpeg',
@@ -112,9 +131,11 @@ export async function sendFile(
 
 export async function mediaRoutes(app: FastifyInstance): Promise<void> {
   /**
-   * Cached WebP thumbnail. Generated on first request and reused forever: the
-   * cache key includes the file's size and mtime, so an edited photo naturally
-   * lands on a different key and the `immutable` caching below stays safe.
+   * Cached WebP thumbnail. Generated on first request and kept on disk from
+   * then on: the *disk* key includes the file's size and mtime, so an edited
+   * photo lands on a different file rather than overwriting one. What a browser
+   * may assume about the id in the URL is a separate question — see
+   * {@link MEDIA_MAX_AGE}.
    */
   app.get<{ Params: { id: string }; Querystring: { h?: string } }>(
     '/api/media/:id/thumb',
@@ -166,7 +187,7 @@ export async function mediaRoutes(app: FastifyInstance): Promise<void> {
         .header('Content-Length', String(stat.size))
         // `private`, not `public`: the response now depends on who asked, so a
         // shared cache in front of the server must never hand it to someone else.
-        .header('Cache-Control', 'private, max-age=31536000, immutable')
+        .header('Cache-Control', `private, max-age=${MEDIA_MAX_AGE}, must-revalidate`)
         .header('ETag', etag)
         .send(createReadStream(thumbFile));
     },
@@ -198,7 +219,9 @@ export async function mediaRoutes(app: FastifyInstance): Promise<void> {
         return reply.code(304).send();
       }
 
-      reply.header('Cache-Control', 'private, max-age=31536000, immutable').header('ETag', etag);
+      reply
+        .header('Cache-Control', `private, max-age=${MEDIA_MAX_AGE}, must-revalidate`)
+        .header('ETag', etag);
       if (req.query.download !== undefined) {
         reply.header('Content-Disposition', contentDisposition(row.name));
       }

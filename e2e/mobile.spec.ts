@@ -65,6 +65,31 @@ test('fits the file browser and its upload button on screen', async ({ page }) =
   expect(overflow).toBeLessThanOrEqual(1);
 });
 
+test('keeps a long watch warning inside the settings card', async ({ page }) => {
+  await page.goto('/settings');
+  const indexing = page.locator('.card', {
+    has: page.getByRole('heading', { name: 'Indexing' }),
+  });
+  await expect(indexing).toBeVisible();
+
+  // The "Watching files" warning quotes whatever path the watcher tripped over,
+  // and a phone has nowhere near the width for one. Injected rather than
+  // provoked: a file watcher failing is not something a test run can arrange.
+  await indexing.locator('.desc').first().evaluate((node) => {
+    node.textContent =
+      "UNKNOWN: unknown error, watch " +
+      "'C:\\Users\\someone\\OneDrive\\Pictures\\2019\\Summer-in-the-mountains" +
+      "\\IMG_20190812_114233_HDR_edited_final.jpg'";
+  });
+
+  const settings = page.locator('.settings');
+  expect(await settings.evaluate((el) => el.scrollWidth - el.clientWidth)).toBeLessThanOrEqual(1);
+  const overflow = await page.evaluate(
+    () => document.documentElement.scrollWidth - document.documentElement.clientWidth,
+  );
+  expect(overflow).toBeLessThanOrEqual(1);
+});
+
 test('shows the login screen without overflow', async ({ page }) => {
   await page.context().clearCookies();
   await page.goto('/');

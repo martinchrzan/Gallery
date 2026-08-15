@@ -116,8 +116,44 @@ test.describe('on this day', () => {
     test.skip(today.getMonth() === 1 && today.getDate() === 29, 'no anniversary on a leap day');
 
     const strip = page.getByRole('region', { name: 'On this day' });
-    await strip.locator('.memory').first().click();
+    const tile = strip.locator('.memory').first();
+    const id = await photoIdOf(tile);
+    await tile.click();
 
     await expect(page.getByRole('dialog')).toBeVisible();
+    // The viewer must land on the photo that was on the tile, not merely open.
+    await expect(page.locator(`.lightbox img[src*="/api/media/${id}/"]`).first()).toBeAttached();
+  });
+
+  test('opens the photo that was pressed, not the one the rail slid into place', async ({
+    page,
+  }) => {
+    const today = new Date();
+    test.skip(today.getMonth() === 1 && today.getDate() === 29, 'no anniversary on a leap day');
+
+    const strip = page.getByRole('region', { name: 'On this day' });
+    const tiles = strip.locator('.memory');
+    expect(await tiles.count()).toBeGreaterThan(1);
+
+    const pressedId = await photoIdOf(tiles.nth(0));
+
+    // The rail auto-advances, and the browser hit-tests a tap where the finger
+    // lifts — so a press on one tile can be released over its neighbour. The
+    // press is what decides, which is what these two events stand in for.
+    await tiles.nth(0).dispatchEvent('pointerdown', { clientX: 40, clientY: 40 });
+    await tiles.nth(1).dispatchEvent('click', { clientX: 42, clientY: 41, detail: 1 });
+
+    await expect(page.getByRole('dialog')).toBeVisible();
+    await expect(
+      page.locator(`.lightbox img[src*="/api/media/${pressedId}/"]`).first(),
+    ).toBeAttached();
   });
 });
+
+/** The photo id behind a strip tile, read off the thumbnail it is showing. */
+async function photoIdOf(tile: import('@playwright/test').Locator): Promise<string> {
+  const src = await tile.locator('img').first().getAttribute('src');
+  const id = /\/api\/media\/(\d+)\//.exec(src ?? '')?.[1];
+  expect(id, `could not read a photo id from ${src}`).toBeTruthy();
+  return id!;
+}

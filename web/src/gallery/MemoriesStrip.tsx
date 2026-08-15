@@ -12,6 +12,8 @@ const PAUSE_AFTER_INPUT = 9000;
 const ARROW_PAGE = 0.8;
 /** Aspect used for a photo whose dimensions were never extracted. */
 const FALLBACK_ASPECT = 3 / 2;
+/** Travel past which a press was a drag of the rail rather than a choice. */
+const TAP_SLOP = 12;
 
 interface MemoriesStripProps {
   memories: Memory[];
@@ -40,10 +42,33 @@ export function MemoriesStrip({
   const [onScreen, setOnScreen] = useState(false);
   /** Timestamp until which the slideshow keeps out of the user's way. */
   const pausedUntil = useRef(0);
+  /**
+   * Which tile the current press landed on, and where the finger was.
+   *
+   * The rail can still be gliding when a finger arrives on it, and the browser
+   * hit-tests the resulting click where the finger *lifts* — so the tap would
+   * otherwise open whichever photo had slid into that spot by then, which is
+   * never the one that was pressed.
+   */
+  const pressed = useRef<{ index: number; x: number; y: number } | null>(null);
 
   const hold = useCallback(() => {
     pausedUntil.current = Date.now() + PAUSE_AFTER_INPUT;
   }, []);
+
+  /**
+   * Stops the rail dead, rather than merely keeping the next step away.
+   *
+   * `hold` only silences the interval; a smooth scroll already in flight — the
+   * auto-advance's, or the browser settling a flick onto a snap point — carries
+   * on animating regardless, and that is what moves the tiles out from under
+   * the finger. Re-issuing the position the rail is at, instantly, aborts it.
+   */
+  const freeze = useCallback(() => {
+    hold();
+    const track = trackRef.current;
+    track?.scrollTo({ left: track.scrollLeft, behavior: 'instant' });
+  }, [hold]);
 
   /* Does the rail actually have somewhere to go? Re-measured on resize, since
      the answer changes with the viewport and with the tiles' own aspects. */
@@ -122,7 +147,7 @@ export function MemoriesStrip({
         <div
           className="memories-track"
           ref={trackRef}
-          onPointerDown={hold}
+          onPointerDown={freeze}
           onWheel={hold}
           onMouseEnter={hold}
         >
@@ -141,7 +166,25 @@ export function MemoriesStrip({
                   aspectRatio:
                     width > 0 && height > 0 ? `${width} / ${height}` : String(FALLBACK_ASPECT),
                 }}
-                onClick={() => onOpen(memory.index)}
+                onPointerDown={(event) => {
+                  pressed.current = { index: memory.index, x: event.clientX, y: event.clientY };
+                }}
+                onClick={(event) => {
+                  // `detail` is 0 for a keyboard activation, which has no press
+                  // to anchor to and cannot have landed on the wrong tile.
+                  const press = event.detail === 0 ? null : pressed.current;
+                  pressed.current = null;
+                  if (
+                    press &&
+                    Math.hypot(event.clientX - press.x, event.clientY - press.y) > TAP_SLOP
+                  ) {
+                    // The finger travelled: that was a scroll of the rail.
+                    return;
+                  }
+                  // The tile that was *pressed*, not the one the release
+                  // happened to be over — see `pressed`.
+                  onOpen(press?.index ?? memory.index);
+                }}
                 title={`${years} — ${formatDateTime(memory.time * 1000)}`}
                 aria-label={`${video ? 'Video' : 'Photo'} from ${years}`}
               >

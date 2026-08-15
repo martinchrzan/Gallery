@@ -315,6 +315,13 @@ input[type='checkbox'] {
   box-shadow: var(--shadow-xs);
 }
 
+/* The topbar is a fixed-height row, so a count long enough to wrap would put
+   its second line outside the bar rather than making it taller. */
+.topbar .pill {
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
+
 .spinner {
   width: 13px;
   height: 13px;
@@ -1620,6 +1627,14 @@ input[type='checkbox'] {
   padding-bottom: 0;
 }
 
+/* The label column, which is the one that gives way when the row is squeezed.
+   A flex item will not shrink below its own longest unbreakable word, and the
+   watch warning quotes a filesystem path — so without this the row grows wider
+   than the card, and the settings page gains a horizontal scrollbar on a phone. */
+.field > :first-child {
+  min-width: 0;
+}
+
 .field label {
   font-size: 13.5px;
   font-weight: 600;
@@ -1631,6 +1646,10 @@ input[type='checkbox'] {
   font-weight: 400;
   margin-top: 3px;
   max-width: 52ch;
+  /* Paths and error strings have nowhere to break; let them break anywhere
+     rather than run off the side. Inherited, so it reaches the raw message
+     nested inside too. */
+  overflow-wrap: anywhere;
 }
 
 .field-control {
@@ -1753,6 +1772,14 @@ input[type='checkbox'] {
 
   /* Narrow screens keep the mark and drop the wordmark. */
   .brand-name {
+    display: none;
+  }
+
+  /* Indexing progress is reported twice while a scan runs: here, and on the
+     pill floating over the gallery. The topbar is a fixed-height row with no
+     slack left on a phone, so its copy wraps onto a second line and spills out
+     of the bar — and it is the less useful of the two, being a bare count. */
+  .topbar .pill {
     display: none;
   }
 
