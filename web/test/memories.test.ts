@@ -111,6 +111,28 @@ describe('pickMemories', () => {
     }
   });
 
+  it('ignores photos dated only by their file timestamp', () => {
+    // A batch copied onto the disk on one afternoon shares an mtime, and would
+    // otherwise fill the strip with photos taken nothing like that day.
+    const count = 2;
+    const ids = new Uint32Array([1, 2]);
+    const times = new Uint32Array([secs(daysAgoFrom(NOW, 1, 11)), secs(daysAgoFrom(NOW, 1, 9))]);
+    const fileDates = new Uint8Array([1, 0]);
+
+    const memories = pickMemories(makeManifest({ count, ids, times, fileDates }), NOW);
+    expect(memories.map((m) => m.id)).toEqual([2]);
+  });
+
+  it('shows no strip at all when every photo that day is file-dated', () => {
+    const count = 2;
+    const ids = new Uint32Array([1, 2]);
+    const times = new Uint32Array([secs(daysAgoFrom(NOW, 1, 11)), secs(daysAgoFrom(NOW, 1, 9))]);
+
+    expect(
+      pickMemories(makeManifest({ count, ids, times, fileDates: new Uint8Array([1, 1]) }), NOW),
+    ).toEqual([]);
+  });
+
   it('is stable within a day, so a rescan does not reshuffle mid-scroll', () => {
     const manifest = manifestFrom(
       Array.from({ length: 60 }, (_, i) => daysAgoFrom(NOW, 1, i % 24)),

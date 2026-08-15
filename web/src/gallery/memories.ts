@@ -1,4 +1,4 @@
-import type { Manifest } from '../api/client';
+import { isFileDatedAt, type Manifest } from '../api/client';
 
 /**
  * "On this day" — the handful of photos taken on today's date in earlier years.
@@ -100,8 +100,15 @@ export function pickMemories(manifest: Manifest, now: Date = new Date()): Memory
 
     const candidates: Memory[] = [];
     for (let i = start; i < end; i++) {
+      // The feed will happily sort a photo by its file timestamp, because it has
+      // to put it somewhere. This does not have to: a strip that says "one year
+      // ago today" is making a claim about when the photo was *taken*, and a
+      // batch copied onto the disk on some unrelated afternoon would fill it
+      // with photos from nothing like that day.
+      if (isFileDatedAt(manifest, i)) continue;
       candidates.push({ index: i, id: manifest.ids[i]!, yearsAgo, time: manifest.times[i]! });
     }
+    if (candidates.length === 0) continue;
     groups.push(shuffled(candidates, random));
   }
 

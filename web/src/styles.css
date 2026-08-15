@@ -716,8 +716,12 @@ input[type='checkbox'] {
   transition: color 0.14s ease, background 0.14s ease, box-shadow 0.14s ease;
 }
 
-.year-rail:hover .year-tick,
-.year-rail.dragging .year-tick {
+/* `:not(.current)` is load-bearing: these selectors outrank `.year-tick.current`
+   on specificity, so without it the year you are in loses its highlight the
+   moment the rail is hovered — and on touch that state sticks after any tap
+   near the right edge, which is most of them. */
+.year-rail:hover .year-tick:not(.current),
+.year-rail.dragging .year-tick:not(.current) {
   color: var(--text-dim);
   background: var(--surface);
   box-shadow: var(--shadow-xs);

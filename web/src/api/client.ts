@@ -49,12 +49,16 @@ export interface Manifest {
   videos: Uint8Array;
   /** Runtime in whole seconds; 0 for photos and for videos of unknown length. */
   durations: Uint16Array;
+  /** 1 when `times` holds the file's own timestamp rather than a capture date. */
+  fileDates: Uint8Array;
 }
 
 export const RECORD_BYTES = 16;
 
 /** Bit 0 of a record's flags field. */
 const MANIFEST_FLAG_VIDEO = 1;
+/** Bit 1: the date is the file's timestamp, so it is not when it was taken. */
+const MANIFEST_FLAG_FILE_DATE = 2;
 
 export const EMPTY_MANIFEST: Manifest = {
   count: 0,
@@ -64,6 +68,7 @@ export const EMPTY_MANIFEST: Manifest = {
   heights: new Uint16Array(0),
   videos: new Uint8Array(0),
   durations: new Uint16Array(0),
+  fileDates: new Uint8Array(0),
 };
 
 /** Builds a manifest from parallel arrays, filling in whatever was omitted. */
@@ -79,12 +84,21 @@ export function makeManifest(
     heights: fields.heights ?? new Uint16Array(count),
     videos: fields.videos ?? new Uint8Array(count),
     durations: fields.durations ?? new Uint16Array(count),
+    fileDates: fields.fileDates ?? new Uint8Array(count),
   };
 }
 
 /** True when the item at this position is a video rather than a photo. */
 export function isVideoAt(manifest: Manifest, index: number): boolean {
   return manifest.videos[index] === 1;
+}
+
+/**
+ * True when this photo's date is its file timestamp rather than a capture date.
+ * Anything presenting a date as when the photo was taken has to check.
+ */
+export function isFileDatedAt(manifest: Manifest, index: number): boolean {
+  return manifest.fileDates[index] === 1;
 }
 
 /**
@@ -141,6 +155,8 @@ export async function fetchManifest(signal?: AbortSignal): Promise<Manifest> {
   if (res.status === 401) onUnauthorized?.();
   if (!res.ok) throw new Error(`Could not load the gallery (${res.status})`);
 
+  setMediaVersion(res.headers.get('X-Media-Version') ?? '');
+
   const buffer = await res.arrayBuffer();
   const count = Math.floor(buffer.byteLength / RECORD_BYTES);
   if (count === 0) return EMPTY_MANIFEST;
@@ -151,6 +167,7 @@ export async function fetchManifest(signal?: AbortSignal): Promise<Manifest> {
   const heights = new Uint16Array(count);
   const videos = new Uint8Array(count);
   const durations = new Uint16Array(count);
+  const fileDates = new Uint8Array(count);
 
   // DataView with an explicit little-endian read: the packed layout is not
   // 4-byte aligned per field, so typed-array views over the buffer won't work.
@@ -162,10 +179,12 @@ export async function fetchManifest(signal?: AbortSignal): Promise<Manifest> {
     widths[i] = view.getUint16(offset + 8, true);
     heights[i] = view.getUint16(offset + 10, true);
     durations[i] = view.getUint16(offset + 12, true);
-    videos[i] = view.getUint16(offset + 14, true) & MANIFEST_FLAG_VIDEO ? 1 : 0;
+    const flags = view.getUint16(offset + 14, true);
+    videos[i] = flags & MANIFEST_FLAG_VIDEO ? 1 : 0;
+    fileDates[i] = flags & MANIFEST_FLAG_FILE_DATE ? 1 : 0;
   }
 
-  return { count, ids, times, widths, heights, videos, durations };
+  return { count, ids, times, widths, heights, videos, durations, fileDates };
 }
 
 /**
@@ -276,16 +295,35 @@ export async function uploadChunk(
 
 /* ------------------------------------------------------------------ urls -- */
 
+/**
+ * Cache-busting token for media URLs, refreshed with every manifest.
+ *
+ * A media URL names its photo by id, and an id is a rowid a rescan can hand to
+ * a different file — so a browser that cached one is holding an image it has no
+ * way to know is stale. Moving the URL when the index changes is what lets a
+ * client escape a copy it would otherwise never re-request.
+ */
+let mediaVersion = '';
+
+export function setMediaVersion(version: string): void {
+  mediaVersion = version;
+}
+
+function versioned(url: string): string {
+  if (!mediaVersion) return url;
+  return `${url}${url.includes('?') ? '&' : '?'}v=${encodeURIComponent(mediaVersion)}`;
+}
+
 export function thumbUrl(id: number, size: 320 | 640 | 1600): string {
-  return `/api/media/${id}/thumb?h=${size}`;
+  return versioned(`/api/media/${id}/thumb?h=${size}`);
 }
 
 export function originalUrl(id: number): string {
-  return `/api/media/${id}/original`;
+  return versioned(`/api/media/${id}/original`);
 }
 
 export function photoDownloadUrl(id: number): string {
-  return `/api/media/${id}/original?download=1`;
+  return versioned(`/api/media/${id}/original?download=1`);
 }
 
 export function fileDownloadUrl(path: string): string {

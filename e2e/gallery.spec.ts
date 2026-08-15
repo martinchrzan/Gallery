@@ -106,6 +106,22 @@ test.describe('the year rail', () => {
     await scrollToEnd(page);
     await expect(page.locator('.year-tick.current')).toHaveText(years[years.length - 1]!);
   });
+
+  test('keeps the highlight visible while the rail is hovered', async ({ page }) => {
+    const current = page.locator('.year-tick.current');
+    const background = (): Promise<string> =>
+      current.evaluate((el) => getComputedStyle(el).backgroundColor);
+    const accent = await background();
+
+    // The hover rule outranks `.year-tick.current` on specificity, so it used to
+    // repaint every label — this one included — as an ordinary chip. On touch
+    // that state latches after any tap near the right edge and stays.
+    await page.locator('.year-rail').hover();
+    // Read once the 140ms transition has settled: polling would match the
+    // starting colour on its first sample and pass whatever happens next.
+    await page.waitForTimeout(400);
+    expect(await background()).toBe(accent);
+  });
 });
 
 /** Scrolls the feed to the bottom and waits for the view to settle there. */

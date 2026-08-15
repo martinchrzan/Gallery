@@ -16,8 +16,17 @@ import type { PhotoDetail, User } from '../types.js';
  */
 export const MANIFEST_RECORD_BYTES = 16;
 
-/** `flags` bit 0. Everything else in that field is reserved. */
+/** `flags` bit 0. */
 export const MANIFEST_FLAG_VIDEO = 1;
+/**
+ * `flags` bit 1: the date is the file's own timestamp, not a capture date.
+ *
+ * Every file is indexed with `taken_at = mtime` up front and only re-dated once
+ * its metadata has been read, so this covers both a photo carrying no date of
+ * its own and one whose scan has not got to it yet. Anything claiming to know
+ * *when a photo was taken* has to be able to tell the two apart.
+ */
+export const MANIFEST_FLAG_FILE_DATE = 2;
 
 interface ManifestRow {
   id: number;
@@ -26,6 +35,7 @@ interface ManifestRow {
   height: number | null;
   kind: number;
   duration_ms: number | null;
+  taken_src: string | null;
 }
 
 function clampU16(value: number | null): number {
@@ -38,7 +48,7 @@ export function buildManifest(user: User): { buffer: Buffer; count: number } {
 
   const rows = getDb()
     .prepare(
-      `SELECT id, taken_at, width, height, kind, duration_ms FROM photos${sql}
+      `SELECT id, taken_at, width, height, kind, duration_ms, taken_src FROM photos${sql}
        ORDER BY taken_at DESC, id DESC`,
     )
     .all(...params) as ManifestRow[];
@@ -55,7 +65,11 @@ export function buildManifest(user: User): { buffer: Buffer; count: number } {
     // Seconds too, saturating at ~18 hours — the badge only needs a duration a
     // person can read, and a clip that long is not one.
     buffer.writeUInt16LE(clampU16(row.duration_ms === null ? null : row.duration_ms / 1000), offset + 12);
-    buffer.writeUInt16LE(row.kind === KIND_VIDEO ? MANIFEST_FLAG_VIDEO : 0, offset + 14);
+    buffer.writeUInt16LE(
+      (row.kind === KIND_VIDEO ? MANIFEST_FLAG_VIDEO : 0) |
+        (row.taken_src === 'mtime' ? MANIFEST_FLAG_FILE_DATE : 0),
+      offset + 14,
+    );
     offset += MANIFEST_RECORD_BYTES;
   }
 
@@ -88,7 +102,7 @@ export async function galleryRoutes(app: FastifyInstance): Promise<void> {
     const etag = manifestEtag(user, count);
 
     if (req.headers['if-none-match'] === etag) {
-      return reply.code(304).send();
+      return reply.code(304).header('X-Media-Version', String(getDataVersion())).send();
     }
 
     return reply
@@ -96,6 +110,9 @@ export async function galleryRoutes(app: FastifyInstance): Promise<void> {
       .header('Cache-Control', 'private, no-cache')
       .header('ETag', etag)
       .header('X-Photo-Count', String(count))
+      // Moves the media URLs whenever the index does, so a browser cannot go on
+      // showing a thumbnail it cached for an id that now means another file.
+      .header('X-Media-Version', String(getDataVersion()))
       .send(buffer);
   });
 

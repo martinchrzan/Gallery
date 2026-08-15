@@ -5,9 +5,11 @@ import {
   downloadZip,
   fetchManifest,
   isVideoAt,
+  originalUrl,
   photoDownloadUrl,
   RECORD_BYTES,
   RequestError,
+  setMediaVersion,
   setUnauthorizedHandler,
   thumbUrl,
   uploadChunk,
@@ -41,7 +43,9 @@ function packManifest(records: Record[]): ArrayBuffer {
 }
 
 function mockFetch(response: Partial<Response> & { arrayBuffer?: () => Promise<ArrayBuffer> }) {
-  const stub = vi.fn().mockResolvedValue({ ok: true, status: 200, ...response });
+  const stub = vi
+    .fn()
+    .mockResolvedValue({ ok: true, status: 200, headers: new Headers(), ...response });
   vi.stubGlobal('fetch', stub);
   return stub;
 }
@@ -49,6 +53,7 @@ function mockFetch(response: Partial<Response> & { arrayBuffer?: () => Promise<A
 afterEach(() => {
   vi.unstubAllGlobals();
   setUnauthorizedHandler(null);
+  setMediaVersion('');
 });
 
 describe('fetchManifest', () => {
@@ -177,6 +182,26 @@ describe('urls', () => {
 
   it('marks a download so the server sends Content-Disposition', () => {
     expect(photoDownloadUrl(42)).toContain('download=1');
+  });
+
+  it('moves every media URL when the index changes identity', () => {
+    // An id is a rowid a rescan can reassign, so a cached thumbnail has to
+    // become unreachable rather than go on standing in for the new file.
+    setMediaVersion('v2');
+
+    expect(thumbUrl(42, 320)).toBe('/api/media/42/thumb?h=320&v=v2');
+    expect(originalUrl(42)).toBe('/api/media/42/original?v=v2');
+    expect(photoDownloadUrl(42)).toBe('/api/media/42/original?download=1&v=v2');
+  });
+
+  it('takes the version off the manifest it just loaded', async () => {
+    mockFetch({
+      headers: new Headers({ 'X-Media-Version': '1755000000000' }),
+      arrayBuffer: async () => packManifest([]),
+    });
+
+    await fetchManifest();
+    expect(thumbUrl(42, 320)).toContain('&v=1755000000000');
   });
 });
 

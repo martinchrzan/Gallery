@@ -32,7 +32,14 @@ export function GalleryView({ settings }: GalleryViewProps): React.ReactElement 
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [scrollTop, setScrollTop] = useState(0);
-  const [openIndex, setOpenIndex] = useState<number | null>(null);
+  /**
+   * The open photo is held by id, not by position.
+   *
+   * A scan finishing reloads the manifest, and every position in it can move;
+   * a position captured when the viewer opened would then be pointing at some
+   * other photo entirely, and the one on screen would change under the reader.
+   */
+  const [openId, setOpenId] = useState<number | null>(null);
 
   // Held as state, not a ref: the loading placeholder renders first, so the
   // measuring effects have to re-run once the real scroller mounts.
@@ -100,6 +107,20 @@ export function GalleryView({ settings }: GalleryViewProps): React.ReactElement 
   const memories = useMemo(
     () => (settings?.showMemories === true ? pickMemories(manifest) : []),
     [manifest, settings?.showMemories],
+  );
+
+  /* -------------------------------------------------------------- lightbox */
+
+  /** Where the open photo sits now; null once it is no longer in the feed. */
+  const openIndex = useMemo(() => {
+    if (openId === null) return null;
+    const at = manifest.ids.indexOf(openId);
+    return at >= 0 ? at : null;
+  }, [manifest, openId]);
+
+  const openAt = useCallback(
+    (index: number) => setOpenId(manifest.ids[index] ?? null),
+    [manifest],
   );
 
   /* --------------------------------------------------------------- scroll */
@@ -211,7 +232,7 @@ export function GalleryView({ settings }: GalleryViewProps): React.ReactElement 
             height={layout.height[i]!}
             video={isVideoAt(manifest, i)}
             duration={manifest.durations[i] ?? 0}
-            onOpen={() => setOpenIndex(i)}
+            onOpen={() => openAt(i)}
           />,
         );
       }
@@ -277,7 +298,7 @@ export function GalleryView({ settings }: GalleryViewProps): React.ReactElement 
       <div className="gallery-scroll" ref={setScrollEl}>
         {/* Above the feed and part of it: the strip scrolls away with the page
             rather than holding a band of every screen for ever. */}
-        <MemoriesStrip manifest={manifest} memories={memories} onOpen={setOpenIndex} />
+        <MemoriesStrip manifest={manifest} memories={memories} onOpen={openAt} />
 
         <div
           className="gallery-canvas"
@@ -325,8 +346,8 @@ export function GalleryView({ settings }: GalleryViewProps): React.ReactElement 
           manifest={manifest}
           index={openIndex}
           showMetadataDefault={settings?.showMetadata ?? false}
-          onIndexChange={setOpenIndex}
-          onClose={() => setOpenIndex(null)}
+          onIndexChange={openAt}
+          onClose={() => setOpenId(null)}
         />
       )}
     </div>
