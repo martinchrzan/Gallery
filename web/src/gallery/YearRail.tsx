@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useElementSize } from '../lib/hooks';
 import type { YearTick } from './layout';
 
 /**
@@ -7,8 +8,10 @@ import type { YearTick } from './layout';
  * targets that all but touch are targets you hit by accident.
  */
 const MIN_TICK_GAP = 32;
-/** Padding the rail leaves at the top and bottom (matches the CSS inset). */
-const RAIL_INSET = 12;
+/** Rail inset assumed until the element itself has been measured. */
+const FALLBACK_RAIL_INSET = 16;
+/** Look-ahead when deciding which year the feed shows; matches the sticky day. */
+const HEADING_LEAD = 8;
 /**
  * How far a press that landed on a year label may wander before it counts as a
  * drag. No finger holds perfectly still, and without this slop the first stray
@@ -40,14 +43,16 @@ export function YearRail({
   scrollTop,
   onScrubTo,
 }: YearRailProps): React.ReactElement | null {
-  const railRef = useRef<HTMLDivElement>(null);
+  const [railEl, setRailEl] = useState<HTMLDivElement | null>(null);
   const [dragging, setDragging] = useState(false);
   const [hoverY, setHoverY] = useState<number | null>(null);
   /** Origin of a press that snapped to a label, until it turns into a drag. */
   const tapAnchor = useRef<number | null>(null);
 
+  const { height: measuredRail } = useElementSize(railEl);
+
   const scrollable = Math.max(1, totalHeight - viewportHeight);
-  const railHeight = Math.max(1, viewportHeight - RAIL_INSET * 2);
+  const railHeight = Math.max(1, measuredRail || viewportHeight - FALLBACK_RAIL_INSET * 2);
 
   /**
    * Years in a dense library land on top of each other, so thin them out — but
@@ -79,7 +84,7 @@ export function YearRail({
 
   const scrubToClientY = useCallback(
     (clientY: number) => {
-      const rail = railRef.current;
+      const rail = railEl;
       if (!rail) return;
       const rect = rail.getBoundingClientRect();
       const fraction = Math.min(1, Math.max(0, (clientY - rect.top) / rect.height));
@@ -133,25 +138,24 @@ export function YearRail({
 
   if (ticks.length < 2) return null;
 
-  // Against the *placed* ticks, not every tick: thinning drops years, and on a
-  // short phone screen it drops most of them, so matching against the full list
-  // left the rail with nothing highlighted whenever you sat in a dropped year.
-  // A kept label stands in for the years thinned out below it.
-  const currentYear = yearAt(placed, scrollTop + viewportHeight * 0.25);
+  // Measured on the rail, so both sides go through the same clamp and the
+  // oldest year — whose position is clamped to the end — can light up at all.
+  const railYNow = Math.min(1, Math.max(0, (scrollTop + HEADING_LEAD) / scrollable)) * railHeight;
+  const currentYear = yearAtRail(placed, railYNow);
   const bubbleYear =
-    hoverY !== null && railRef.current
+    hoverY !== null && railEl
       ? yearAt(
           ticks,
           Math.min(
             1,
-            Math.max(0, (hoverY - railRef.current.getBoundingClientRect().top) / railHeight),
+            Math.max(0, (hoverY - railEl.getBoundingClientRect().top) / railHeight),
           ) * scrollable,
         )
       : null;
 
   return (
     <div
-      ref={railRef}
+      ref={setRailEl}
       className={`year-rail${dragging ? ' dragging' : ''}`}
       onPointerDown={(event) => {
         event.preventDefault();
@@ -188,16 +192,26 @@ export function YearRail({
           {tick.year}
         </div>
       ))}
-      {bubbleYear !== null && railRef.current && (
+      {bubbleYear !== null && railEl && (
         <div
           className="rail-bubble"
-          style={{ top: `${hoverY! - railRef.current.getBoundingClientRect().top}px` }}
+          style={{ top: `${hoverY! - railEl.getBoundingClientRect().top}px` }}
         >
           {bubbleYear}
         </div>
       )}
     </div>
   );
+}
+
+/** The last label at or above a point on the rail. */
+function yearAtRail(ticks: PlacedTick[], railY: number): number | null {
+  let current: number | null = ticks[0]?.year ?? null;
+  for (const tick of ticks) {
+    if (tick.railY <= railY) current = tick.year;
+    else break;
+  }
+  return current;
 }
 
 /** The year covering a given document offset. */

@@ -12,6 +12,8 @@ const PAUSE_AFTER_INPUT = 9000;
 const ARROW_PAGE = 0.8;
 /** Aspect used for a photo whose dimensions were never extracted. */
 const FALLBACK_ASPECT = 3 / 2;
+/** Travel past which a press was a drag of the rail rather than a choice. */
+const TAP_SLOP = 12;
 
 interface MemoriesStripProps {
   memories: Memory[];
@@ -40,10 +42,19 @@ export function MemoriesStrip({
   const [onScreen, setOnScreen] = useState(false);
   /** Timestamp until which the slideshow keeps out of the user's way. */
   const pausedUntil = useRef(0);
+  /** Which tile the current press landed on, and where the finger was. */
+  const pressed = useRef<{ index: number; x: number; y: number } | null>(null);
 
   const hold = useCallback(() => {
     pausedUntil.current = Date.now() + PAUSE_AFTER_INPUT;
   }, []);
+
+  /** Stops the rail dead: `hold` alone leaves a scroll already in flight running. */
+  const freeze = useCallback(() => {
+    hold();
+    const track = trackRef.current;
+    track?.scrollTo({ left: track.scrollLeft, behavior: 'instant' });
+  }, [hold]);
 
   /* Does the rail actually have somewhere to go? Re-measured on resize, since
      the answer changes with the viewport and with the tiles' own aspects. */
@@ -122,7 +133,7 @@ export function MemoriesStrip({
         <div
           className="memories-track"
           ref={trackRef}
-          onPointerDown={hold}
+          onPointerDown={freeze}
           onWheel={hold}
           onMouseEnter={hold}
         >
@@ -141,7 +152,23 @@ export function MemoriesStrip({
                   aspectRatio:
                     width > 0 && height > 0 ? `${width} / ${height}` : String(FALLBACK_ASPECT),
                 }}
-                onClick={() => onOpen(memory.index)}
+                onPointerDown={(event) => {
+                  pressed.current = { index: memory.index, x: event.clientX, y: event.clientY };
+                }}
+                onClick={(event) => {
+                  // A keyboard activation reports detail 0 and has no press.
+                  const press = event.detail === 0 ? null : pressed.current;
+                  pressed.current = null;
+                  if (
+                    press &&
+                    Math.hypot(event.clientX - press.x, event.clientY - press.y) > TAP_SLOP
+                  ) {
+                    return;
+                  }
+                  // The tile pressed, not the one the release landed on: the
+                  // rail can move between the two.
+                  onOpen(press?.index ?? memory.index);
+                }}
                 title={`${years} — ${formatDateTime(memory.time * 1000)}`}
                 aria-label={`${video ? 'Video' : 'Photo'} from ${years}`}
               >

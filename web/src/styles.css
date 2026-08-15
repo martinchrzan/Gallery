@@ -315,6 +315,12 @@ input[type='checkbox'] {
   box-shadow: var(--shadow-xs);
 }
 
+/* The bar has a fixed height: a wrapped count would spill out of it. */
+.topbar .pill {
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
+
 .spinner {
   width: 13px;
   height: 13px;
@@ -673,10 +679,12 @@ input[type='checkbox'] {
 
 /* Year scrubber rail */
 
+/* Labels are centred on their positions, so the inset also covers the half that
+   hangs past each end. YearRail measures it rather than assuming it. */
 .year-rail {
   position: absolute;
-  top: 12px;
-  bottom: 12px;
+  top: 16px;
+  bottom: 16px;
   right: 4px;
   width: 60px;
   z-index: 6;
@@ -1620,6 +1628,11 @@ input[type='checkbox'] {
   padding-bottom: 0;
 }
 
+/* Lets the label column shrink below its longest unbreakable word. */
+.field > :first-child {
+  min-width: 0;
+}
+
 .field label {
   font-size: 13.5px;
   font-weight: 600;
@@ -1631,6 +1644,8 @@ input[type='checkbox'] {
   font-weight: 400;
   margin-top: 3px;
   max-width: 52ch;
+  /* Paths and error strings have nowhere else to break. */
+  overflow-wrap: anywhere;
 }
 
 .field-control {
@@ -1756,6 +1771,12 @@ input[type='checkbox'] {
     display: none;
   }
 
+  /* The pill floating over the gallery already reports the scan, and there is
+     no slack up here for a second line. */
+  .topbar .pill {
+    display: none;
+  }
+
   /* The lightbox bar is a single non-wrapping row, so on a phone its desktop
      contents overflow and the trailing actions — Details, Download — are simply
      cut off the right edge. Everything that touch already covers goes away, and
@@ -1826,6 +1847,10 @@ input[type='checkbox'] {
 
   .year-rail {
     width: 46px;
+    /* Deeper: the touch chips below are taller, and half of one hangs past
+       each end of the rail. */
+    top: 20px;
+    bottom: 20px;
   }
 
   /* Without hover the years sit bare over whatever photo happens to be behind

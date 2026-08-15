@@ -94,7 +94,28 @@ test.describe('the year rail', () => {
       .poll(async () => scroller.evaluate((el) => el.scrollTop))
       .toBeGreaterThan(0);
   });
+
+  test('highlights the year the feed is showing, the oldest one included', async ({ page }) => {
+    const ticks = page.locator('.year-tick');
+    const years = (await ticks.allTextContents()).map((y) => y.trim());
+
+    await expect(page.locator('.year-tick.current')).toHaveText(years[0]!);
+
+    // The oldest label sits at a clamped position, which is where the highlight
+    // used to stop being able to reach it.
+    await scrollToEnd(page);
+    await expect(page.locator('.year-tick.current')).toHaveText(years[years.length - 1]!);
+  });
 });
+
+/** Scrolls the feed to the bottom and waits for the view to settle there. */
+async function scrollToEnd(page: import('@playwright/test').Page): Promise<void> {
+  const scroller = page.locator('.gallery-scroll');
+  await scroller.evaluate((el) => el.scrollTo({ top: el.scrollHeight, behavior: 'auto' }));
+  await expect
+    .poll(async () => scroller.evaluate((el) => el.scrollHeight - el.clientHeight - el.scrollTop))
+    .toBeLessThanOrEqual(1);
+}
 
 test.describe('on this day', () => {
   test('shows the strip, since the fixture has anniversary photos', async ({ page }) => {
@@ -116,8 +137,44 @@ test.describe('on this day', () => {
     test.skip(today.getMonth() === 1 && today.getDate() === 29, 'no anniversary on a leap day');
 
     const strip = page.getByRole('region', { name: 'On this day' });
-    await strip.locator('.memory').first().click();
+    const tile = strip.locator('.memory').first();
+    const id = await photoIdOf(tile);
+    await tile.click();
 
     await expect(page.getByRole('dialog')).toBeVisible();
+    // The viewer must land on the photo that was on the tile, not merely open.
+    await expect(page.locator(`.lightbox img[src*="/api/media/${id}/"]`).first()).toBeAttached();
+  });
+
+  test('opens the photo that was pressed, not the one the rail slid into place', async ({
+    page,
+  }) => {
+    const today = new Date();
+    test.skip(today.getMonth() === 1 && today.getDate() === 29, 'no anniversary on a leap day');
+
+    const strip = page.getByRole('region', { name: 'On this day' });
+    const tiles = strip.locator('.memory');
+    expect(await tiles.count()).toBeGreaterThan(1);
+
+    const pressedId = await photoIdOf(tiles.nth(0));
+
+    // The rail auto-advances, and the browser hit-tests a tap where the finger
+    // lifts — so a press on one tile can be released over its neighbour. The
+    // press is what decides, which is what these two events stand in for.
+    await tiles.nth(0).dispatchEvent('pointerdown', { clientX: 40, clientY: 40 });
+    await tiles.nth(1).dispatchEvent('click', { clientX: 42, clientY: 41, detail: 1 });
+
+    await expect(page.getByRole('dialog')).toBeVisible();
+    await expect(
+      page.locator(`.lightbox img[src*="/api/media/${pressedId}/"]`).first(),
+    ).toBeAttached();
   });
 });
+
+/** The photo id behind a strip tile, read off the thumbnail it is showing. */
+async function photoIdOf(tile: import('@playwright/test').Locator): Promise<string> {
+  const src = await tile.locator('img').first().getAttribute('src');
+  const id = /\/api\/media\/(\d+)\//.exec(src ?? '')?.[1];
+  expect(id, `could not read a photo id from ${src}`).toBeTruthy();
+  return id!;
+}
