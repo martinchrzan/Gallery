@@ -25,9 +25,11 @@ const SIDE_PADDING = 16;
 
 interface GalleryViewProps {
   settings: Settings | null;
+  /** Lets a broken tile offer to regenerate itself. */
+  canRepair?: boolean;
 }
 
-export function GalleryView({ settings }: GalleryViewProps): React.ReactElement {
+export function GalleryView({ settings, canRepair = false }: GalleryViewProps): React.ReactElement {
   const [manifest, setManifest] = useState<Manifest>(EMPTY_MANIFEST);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -232,13 +234,14 @@ export function GalleryView({ settings }: GalleryViewProps): React.ReactElement 
             height={layout.height[i]!}
             video={isVideoAt(manifest, i)}
             duration={manifest.durations[i] ?? 0}
+            canRepair={canRepair}
             onOpen={() => openAt(i)}
           />,
         );
       }
     }
     return nodes;
-  }, [layout, manifest, visible.rowStart, visible.rowEnd]);
+  }, [canRepair, layout, manifest, visible.rowStart, visible.rowEnd]);
 
   /* ----------------------------------------------------------------- view */
 

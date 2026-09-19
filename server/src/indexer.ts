@@ -10,6 +10,8 @@ import {
   getSettings,
   KIND_IMAGE,
   KIND_VIDEO,
+  markMetaFailed,
+  MAX_META_ATTEMPTS,
   META_DONE,
   META_FAILED,
   META_INFLIGHT,
@@ -22,6 +24,7 @@ import {
   isIndexableMedia,
   isSupportedVideo,
   isUnsupportedImage,
+  realpathWithin,
   relFromAbs,
   toRelPosix,
 } from './paths.js';
@@ -40,12 +43,6 @@ const WALK_BATCH = 500;
  * extra file in the batch can cost a second on a slow disk.
  */
 const META_BATCH = 8;
-/**
- * How often one file may be handed to the extractor before it is retired.
- * A file that kills its worker process never reports a result, so without this
- * the next scan would pick it up again and die in exactly the same place.
- */
-const MAX_META_ATTEMPTS = 3;
 
 export const indexEvents = new EventEmitter();
 
@@ -207,7 +204,68 @@ function buildStatements() {
       `UPDATE photos SET meta_state = ${META_PENDING}, meta_attempts = 0
        WHERE kind = ${KIND_VIDEO} AND meta_state = ${META_DONE} AND width IS NULL`,
     ),
+    /**
+     * Videos whose probe failed without killing anything. ffprobe refusing a
+     * file it read fine a minute earlier — under load, or while a sync client
+     * or antivirus held the freshly written file — is common enough that one
+     * failure is no verdict. Each scan tries again until the attempts run out.
+     */
+    failedVideos: db.prepare<[]>(
+      `UPDATE photos SET meta_state = ${META_PENDING}
+       WHERE kind = ${KIND_VIDEO} AND meta_state = ${META_FAILED}
+         AND meta_attempts < ${MAX_META_ATTEMPTS}`,
+    ),
+    /** Everything given up on, for an admin asking to try it all again. */
+    requeueFailed: db.prepare<[]>(
+      `UPDATE photos SET meta_state = ${META_PENDING}, meta_attempts = 0
+       WHERE meta_state = ${META_FAILED}`,
+    ),
+    resetAttempts: db.prepare<[number]>('UPDATE photos SET meta_attempts = 0 WHERE id = ?'),
+    markDone: db.prepare<[number]>(`UPDATE photos SET meta_state = ${META_DONE} WHERE id = ?`),
+    failedCount: db.prepare<[], { n: number }>(
+      `SELECT count(*) AS n FROM photos WHERE meta_state = ${META_FAILED}`,
+    ),
+    byId: db.prepare<
+      [number],
+      {
+        id: number;
+        rel_path: string;
+        name: string;
+        mtime_ms: number;
+        content_key: string;
+        kind: number;
+        meta_state: number;
+        duration_ms: number | null;
+      }
+    >(
+      `SELECT id, rel_path, name, mtime_ms, content_key, kind, meta_state, duration_ms
+       FROM photos WHERE id = ?`,
+    ),
   };
+}
+
+/** Writes one extraction result back to its row. */
+function applyResult(r: MetaResult): void {
+  statements().applyMeta.run({
+    id: r.id,
+    width: r.width,
+    height: r.height,
+    orientation: r.orientation,
+    taken_at: r.takenAt,
+    taken_src: r.takenSrc,
+    camera: r.camera,
+    lens: r.lens,
+    iso: r.iso,
+    fnum: r.fnum,
+    exposure: r.exposure,
+    focal: r.focal,
+    gps_lat: r.gpsLat,
+    gps_lon: r.gpsLon,
+    duration_ms: r.durationMs,
+    // A file that failed to decode is marked done-with-failure so the next
+    // scan does not retry it forever.
+    meta_state: r.failed ? META_FAILED : META_DONE,
+  });
 }
 
 let stmts: ReturnType<typeof buildStatements> | null = null;
@@ -315,8 +373,7 @@ async function walk(gen: number): Promise<void> {
  */
 async function extractPending(): Promise<void> {
   const db = getDb();
-  const { pending, pendingCount, applyMeta, claim, stuck, retire, reclaimAll, failOne } =
-    statements();
+  const { pending, pendingCount, claim, stuck, retire, reclaimAll } = statements();
   const pool = getImagePool();
 
   // Recover anything a previous run left claimed. Rows still claimed here were
@@ -350,27 +407,7 @@ async function extractPending(): Promise<void> {
 
   const writeResults = db.transaction((results: MetaResult[]) => {
     for (const r of results) {
-      if (!r) continue;
-      applyMeta.run({
-        id: r.id,
-        width: r.width,
-        height: r.height,
-        orientation: r.orientation,
-        taken_at: r.takenAt,
-        taken_src: r.takenSrc,
-        camera: r.camera,
-        lens: r.lens,
-        iso: r.iso,
-        fnum: r.fnum,
-        exposure: r.exposure,
-        focal: r.focal,
-        gps_lat: r.gpsLat,
-        gps_lon: r.gpsLon,
-        duration_ms: r.durationMs,
-        // A file that failed to decode is marked done-with-failure so the next
-        // scan does not retry it forever.
-        meta_state: r.failed ? META_FAILED : META_DONE,
-      });
+      if (r) applyResult(r);
     }
   });
 
@@ -437,7 +474,7 @@ async function extractPending(): Promise<void> {
         console.warn(
           `[indexer] skipping ${job.absPath}: the metadata worker died reading it (${err.message})`,
         );
-        failOne.run(job.id);
+        markMetaFailed(job.id);
         status.lastError = `Skipped ${relFromAbs(job.absPath)}: could not be read`;
         advance(1);
       })
@@ -492,7 +529,7 @@ async function prewarm(signal: { cancelled: boolean }): Promise<void> {
           // for someone to scroll past it in the gallery.
           if (err instanceof ThumbError && err.fatal) {
             console.warn(`[indexer] ${row.rel_path} killed the thumbnail worker; marking unreadable`);
-            statements().failOne.run(row.id);
+            markMetaFailed(row.id);
           }
         });
       }
@@ -564,6 +601,10 @@ export function scan(): Promise<void> {
         const repaired = statements().unprobedVideos.run().changes;
         if (repaired > 0) {
           console.info(`[indexer] re-reading ${repaired} video(s) now that ffprobe is available`);
+        }
+        const retried = statements().failedVideos.run().changes;
+        if (retried > 0) {
+          console.info(`[indexer] retrying ${retried} video(s) that could not be read last time`);
         }
       }
 
@@ -642,6 +683,98 @@ export async function indexNewFile(abs: string): Promise<void> {
   scheduleWatchFlush();
 }
 
+/* ---------------------------------------------------------------- repair -- */
+
+export interface RepairResult {
+  ok: boolean;
+  /** Why the preview still could not be made, when it could not. */
+  error: string | null;
+}
+
+/**
+ * Starts one file over: forgets its cached thumbnails and any verdict against
+ * it, reads its metadata again, and renders its grid thumbnail. The answer says
+ * whether the preview now exists, not merely that a retry was queued.
+ *
+ * Returns null for an id that is not in the index.
+ */
+export async function repairMedia(id: number): Promise<RepairResult | null> {
+  const s = statements();
+  const row = s.byId.get(id);
+  if (!row) return null;
+
+  await deleteThumbs(row.content_key);
+
+  // Claimed like any batch, which keeps a concurrent extraction pass off it.
+  s.resetAttempts.run(id);
+  s.claim.run(id);
+
+  let abs: string;
+  try {
+    abs = await realpathWithin(absFromRel(row.rel_path));
+  } catch {
+    s.failOne.run(id);
+    return { ok: false, error: 'The file is no longer on disk' };
+  }
+
+  try {
+    const [result] = await getImagePool().run([
+      { id, absPath: abs, fileName: row.name, mtimeMs: row.mtime_ms },
+    ]);
+    if (result) applyResult(result);
+    else s.failOne.run(id);
+  } catch {
+    markMetaFailed(id);
+    bumpDataVersion();
+    return { ok: false, error: 'Reading this file crashed the reader' };
+  }
+  bumpDataVersion();
+
+  const fresh = s.byId.get(id);
+  if (!fresh) return null;
+  // A photo libvips cannot read will not thumbnail either. A video still can:
+  // its poster comes from ffmpeg, which does not need ffprobe's blessing.
+  if (fresh.meta_state === META_FAILED && fresh.kind !== KIND_VIDEO) {
+    return { ok: false, error: 'This image could not be read' };
+  }
+
+  try {
+    await getThumb(abs, fresh.content_key, 320, {
+      video: fresh.kind === KIND_VIDEO,
+      durationMs: fresh.duration_ms,
+    });
+  } catch (err) {
+    if (err instanceof ThumbError && err.fatal) markMetaFailed(id);
+    return { ok: false, error: (err as Error).message };
+  }
+
+  // The preview exists, so the file is readable whatever the probe said.
+  // Clearing the verdict keeps the thumbnail route from refusing the other sizes.
+  if (fresh.meta_state === META_FAILED) {
+    s.markDone.run(id);
+    bumpDataVersion();
+  }
+  return { ok: true, error: null };
+}
+
+/**
+ * Gives every file the index has given up on a fresh set of attempts, and
+ * starts reading them. Returns how many were queued.
+ */
+export function retryFailed(): number {
+  const queued = statements().requeueFailed.run().changes;
+  if (queued > 0) {
+    bumpDataVersion();
+    scheduleWatchFlush();
+  }
+  return queued;
+}
+
+/** Files currently marked unreadable, for the settings page. */
+export function failedCount(): number {
+  return statements().failedCount.get()?.n ?? 0;
+}
+
 async function unindexOne(abs: string): Promise<void> {
   const rel = relFromAbs(abs);
   const row = getDb().prepare('SELECT id, content_key FROM photos WHERE rel_path = ?').get(rel) as
@@ -666,17 +799,22 @@ function scheduleWatchFlush(): void {
   // before spending worker time on extraction.
   watchFlushTimer = setTimeout(() => {
     watchFlushTimer = null;
-    if (!status.scanning) {
-      status.scanning = true;
-      status.phase = 'extracting';
-      void extractPending()
-        .catch(() => {})
-        .finally(() => {
-          status.scanning = false;
-          status.phase = 'idle';
-          emitStatus(true);
-        });
+    // A pass already running may have finished handing out work before these
+    // rows were queued, so look again once it is done. Dropping the flush here
+    // left an upload that landed mid-scan pending until the next full scan.
+    if (status.scanning) {
+      scheduleWatchFlush();
+      return;
     }
+    status.scanning = true;
+    status.phase = 'extracting';
+    void extractPending()
+      .catch(() => {})
+      .finally(() => {
+        status.scanning = false;
+        status.phase = 'idle';
+        emitStatus(true);
+      });
   }, 2000);
   watchFlushTimer.unref();
 }

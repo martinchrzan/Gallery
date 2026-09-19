@@ -72,10 +72,26 @@ async function runnable(command: string): Promise<boolean> {
  * Resolution order: an explicit setting, then the bundled binary, then the
  * PATH. Memoised as a promise, so the `-version` probe runs once per process
  * however many videos are waiting on it.
+ *
+ * Only a *found* tool is remembered for good. Every image worker runs this
+ * lookup for itself, and the `-version` check can fail for reasons that have
+ * nothing to do with whether ffmpeg is installed — a spawn under load, an
+ * antivirus scan of the binary on its first launch. Remembering that failure
+ * for the life of the process left one worker unable to make any poster at
+ * all, so a random share of videos had none. A miss is retried after
+ * {@link MISS_RETRY_MS} instead.
  */
 const resolved = new Map<VideoTool, Promise<string | null>>();
+const missedAt = new Map<VideoTool, number>();
+const MISS_RETRY_MS = 30_000;
 
 export function toolPath(tool: VideoTool): Promise<string | null> {
+  const missed = missedAt.get(tool);
+  if (missed !== undefined && Date.now() - missed > MISS_RETRY_MS) {
+    resolved.delete(tool);
+    missedAt.delete(tool);
+  }
+
   let lookup = resolved.get(tool);
   if (!lookup) {
     lookup = (async () => {
@@ -91,6 +107,7 @@ export function toolPath(tool: VideoTool): Promise<string | null> {
       for (const candidate of [bundledPath(tool), tool]) {
         if (candidate && (await runnable(candidate))) return candidate;
       }
+      missedAt.set(tool, Date.now());
       return null;
     })();
     resolved.set(tool, lookup);
@@ -262,17 +279,37 @@ export async function extractPoster(absPath: string, durationMs: number | null):
       ? Math.min(POSTER_SEEK_CAP_MS, Math.floor(durationMs * POSTER_SEEK_FRACTION))
       : POSTER_SEEK_CAP_MS;
 
-  const frame = await grabFrame(ffmpeg, absPath, seekMs);
-  if (frame.length > 0) return frame;
+  // The seek first, then the very first frame, which always exists — a seek can
+  // land past the end of a clip shorter than we guessed, and some ffmpeg builds
+  // report that as an error rather than as empty output. No pause-and-retry for
+  // a briefly locked file: this runs in a pool worker, and the tile already
+  // asks again a few seconds later.
+  const attempts = seekMs > 0 ? [seekMs, 0] : [0];
+  let lastError: Error | null = null;
 
-  // Seeking landed past the end — a clip shorter than we guessed, or a file
-  // whose duration is a lie. The very first frame always exists.
-  if (seekMs > 0) {
-    const first = await grabFrame(ffmpeg, absPath, 0);
-    if (first.length > 0) return first;
+  for (const at of attempts) {
+    try {
+      const frame = await grabFrame(ffmpeg, absPath, at);
+      if (frame.length > 0) return frame;
+    } catch (err) {
+      lastError = err as Error;
+    }
   }
 
-  throw new Error('ffmpeg produced no frame for this video');
+  throw new Error(
+    lastError
+      ? `ffmpeg could not read a frame: ${lastLine(lastError.message)}`
+      : 'ffmpeg produced no frame for this video',
+  );
+}
+
+/** execFile's message opens with the whole command line; the reason is last. */
+function lastLine(message: string): string {
+  const lines = message
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean);
+  return lines[lines.length - 1] ?? message;
 }
 
 async function grabFrame(ffmpeg: string, absPath: string, seekMs: number): Promise<Buffer> {

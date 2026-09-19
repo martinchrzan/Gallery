@@ -1,7 +1,8 @@
-import { memo, useState } from 'react';
+import { memo } from 'react';
 import { thumbUrl } from '../api/client';
 import { formatDuration } from '../lib/format';
-import { IconPlay, IconVideo } from './icons';
+import { IconPlay, IconRefresh, IconVideo } from './icons';
+import { useThumbRetry } from './useThumbRetry';
 
 interface ThumbProps {
   id: number;
@@ -16,6 +17,8 @@ interface ThumbProps {
   video?: boolean;
   /** Runtime in seconds; 0 or absent hides the time from the badge. */
   duration?: number;
+  /** Offers a button on a broken tile that regenerates it. Admins only. */
+  canRepair?: boolean;
 }
 
 /**
@@ -33,8 +36,10 @@ function ThumbImpl({
   label,
   video = false,
   duration = 0,
+  canRepair = false,
 }: ThumbProps): React.ReactElement {
-  const [state, setState] = useState<'loading' | 'loaded' | 'error'>('loading');
+  const retry = useThumbRetry(id);
+  const { state, attempt } = retry;
 
   return (
     <div
@@ -61,22 +66,45 @@ function ThumbImpl({
         // openable, where a photo that will not render gets a warning.
         <div
           className="thumb-broken"
-          title={video ? 'No preview for this video' : 'This image could not be rendered'}
+          title={
+            retry.repairError ??
+            (video ? 'No preview for this video' : 'This image could not be rendered')
+          }
         >
           {video ? <IconVideo size={22} /> : '⚠'}
+          {canRepair && (
+            <button
+              className="thumb-repair"
+              disabled={retry.repairing}
+              title="Try to make the preview again"
+              aria-label="Retry preview"
+              onClick={(event) => {
+                // The tile itself opens the viewer; this button must not.
+                event.stopPropagation();
+                retry.repair();
+              }}
+              onKeyDown={(event) => event.stopPropagation()}
+            >
+              <IconRefresh size={13} className={retry.repairing ? 'spin' : undefined} />
+              <span>{retry.repairing ? 'Retrying…' : retry.repairError ? 'Failed' : 'Retry'}</span>
+            </button>
+          )}
         </div>
       ) : (
         <img
-          src={thumbUrl(id, 320)}
+          // Keyed on the attempt so a retry is a new element: the old one's
+          // failed load cannot fire late and knock the new one back to broken.
+          key={attempt}
+          src={thumbUrl(id, 320, attempt)}
           // The 640px variant only downloads on HiDPI screens, where it is
           // actually needed — no wasted bytes on a normal display.
-          srcSet={`${thumbUrl(id, 320)} 1x, ${thumbUrl(id, 640)} 2x`}
+          srcSet={`${thumbUrl(id, 320, attempt)} 1x, ${thumbUrl(id, 640, attempt)} 2x`}
           className={state === 'loaded' ? 'loaded' : undefined}
           alt=""
           draggable={false}
           decoding="async"
-          onLoad={() => setState('loaded')}
-          onError={() => setState('error')}
+          onLoad={retry.onLoad}
+          onError={retry.onError}
         />
       )}
 

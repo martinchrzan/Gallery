@@ -19,14 +19,17 @@ import {
   IconFolderPlus,
   IconImage,
   IconPlay,
+  IconRefresh,
+  IconStar,
   IconUpload,
 } from '../components/icons';
+import { useThumbRetry } from '../components/useThumbRetry';
 import { Lightbox } from '../lightbox/Lightbox';
 import { formatBytes, formatCount } from '../lib/format';
 import { useToast } from '../lib/hooks';
 import { UploadPanel } from './UploadPanel';
 import { useUploader } from './uploads';
-import type { FileEntry } from '@shared';
+import type { DirEntry, FileEntry } from '@shared';
 
 export function FilesView(): React.ReactElement {
   const params = useParams();
@@ -156,6 +159,38 @@ export function FilesView(): React.ReactElement {
     }
   }, [creating, currentPath, newFolder, refresh, showToast]);
 
+  /* ------------------------------------------------------------ favourites */
+
+  const toggleFavorite = useCallback(
+    (dir: DirEntry): void => {
+      const favorite = !dir.favorite;
+      // Flipped on screen straight away; the listing is re-read afterwards so
+      // the order and the starred row come from the server's answer.
+      setData((prev) =>
+        prev
+          ? {
+              ...prev,
+              dirs: prev.dirs.map((d) => (d.path === dir.path ? { ...d, favorite } : d)),
+              favorites: prev.favorites.map((d) =>
+                d.path === dir.path ? { ...d, favorite } : d,
+              ),
+            }
+          : prev,
+      );
+      api
+        .setFavorite(dir.path, favorite)
+        .then(() => {
+          refresh();
+          showToast(favorite ? `Starred ${dir.name}` : `Unstarred ${dir.name}`);
+        })
+        .catch((err: Error) => {
+          refresh();
+          showToast(err.message, true);
+        });
+    },
+    [refresh, showToast],
+  );
+
   const fileInput = useRef<HTMLInputElement | null>(null);
   const [dragging, setDragging] = useState(false);
   // Drag events fire for every child the pointer crosses, so leaving is counted
@@ -272,6 +307,12 @@ export function FilesView(): React.ReactElement {
   const crumbs = buildCrumbs(currentPath);
   const dirs = data?.dirs ?? [];
   const files = data?.files ?? [];
+  const favorites = data?.favorites ?? [];
+
+  const zipFolder = (dir: DirEntry): void => {
+    downloadZip([dir.path]);
+    showToast(`Preparing a ZIP of ${dir.name}…`);
+  };
 
   return (
     <div
@@ -379,6 +420,24 @@ export function FilesView(): React.ReactElement {
         </div>
       </div>
 
+      {favorites.length > 0 && (
+        <>
+          <div className="section-label">Starred · {formatCount(favorites.length)}</div>
+          <div className="folder-grid">
+            {favorites.map((dir) => (
+              <FolderCard
+                key={dir.path}
+                dir={dir}
+                showPath
+                onOpen={() => openFolder(dir.path)}
+                onZip={() => zipFolder(dir)}
+                onToggleFavorite={() => toggleFavorite(dir)}
+              />
+            ))}
+          </div>
+        </>
+      )}
+
       {dirs.length === 0 && files.length === 0 && !naming && (
         <div className="empty" style={{ height: 'auto', paddingTop: 60 }}>
           <h2>This folder is empty</h2>
@@ -427,21 +486,13 @@ export function FilesView(): React.ReactElement {
               </div>
             )}
             {dirs.map((dir) => (
-              <div className="folder-card" key={dir.path} onClick={() => openFolder(dir.path)}>
-                <IconFolder size={17} />
-                <span className="name">{dir.name}</span>
-                <button
-                  className="zip"
-                  title="Download this folder as a ZIP"
-                  onClick={(event) => {
-                    event.stopPropagation();
-                    downloadZip([dir.path]);
-                    showToast(`Preparing a ZIP of ${dir.name}…`);
-                  }}
-                >
-                  <IconArchive size={15} />
-                </button>
-              </div>
+              <FolderCard
+                key={dir.path}
+                dir={dir}
+                onOpen={() => openFolder(dir.path)}
+                onZip={() => zipFolder(dir)}
+                onToggleFavorite={() => toggleFavorite(dir)}
+              />
             ))}
           </div>
         </>
@@ -491,6 +542,57 @@ export function FilesView(): React.ReactElement {
   );
 }
 
+interface FolderCardProps {
+  dir: DirEntry;
+  /** Shows where the folder lives, for the starred row at the top level. */
+  showPath?: boolean;
+  onOpen: () => void;
+  onZip: () => void;
+  onToggleFavorite: () => void;
+}
+
+function FolderCard({
+  dir,
+  showPath = false,
+  onOpen,
+  onZip,
+  onToggleFavorite,
+}: FolderCardProps): React.ReactElement {
+  const parent = dir.path.includes('/') ? dir.path.slice(0, dir.path.lastIndexOf('/')) : '';
+
+  return (
+    <div className={`folder-card${dir.favorite ? ' starred' : ''}`} onClick={onOpen}>
+      <IconFolder size={17} />
+      <span className="name" title={dir.path}>
+        {dir.name}
+        {showPath && parent && <span className="folder-path">{parent}</span>}
+      </span>
+      <button
+        className={`star${dir.favorite ? ' on' : ''}`}
+        title={dir.favorite ? 'Unstar this folder' : 'Star this folder to keep it at the top'}
+        aria-label={dir.favorite ? 'Unstar folder' : 'Star folder'}
+        aria-pressed={!!dir.favorite}
+        onClick={(event) => {
+          event.stopPropagation();
+          onToggleFavorite();
+        }}
+      >
+        <IconStar size={15} filled={!!dir.favorite} />
+      </button>
+      <button
+        className="zip"
+        title="Download this folder as a ZIP"
+        onClick={(event) => {
+          event.stopPropagation();
+          onZip();
+        }}
+      >
+        <IconArchive size={15} />
+      </button>
+    </div>
+  );
+}
+
 interface FileCardProps {
   file: FileEntry;
   selected: boolean;
@@ -499,9 +601,10 @@ interface FileCardProps {
 }
 
 function FileCard({ file, selected, onToggle, onOpen }: FileCardProps): React.ReactElement {
-  const [loaded, setLoaded] = useState(false);
-  const [failed, setFailed] = useState(false);
-  const viewable = file.photoId !== null && !failed;
+  const retry = useThumbRetry(file.photoId);
+  const failed = retry.state === 'error';
+  // A video with no poster still plays, so it stays openable either way.
+  const viewable = file.photoId !== null && (!failed || file.video);
 
   return (
     <div className={`file-card${selected ? ' selected' : ''}`}>
@@ -516,15 +619,40 @@ function FileCard({ file, selected, onToggle, onOpen }: FileCardProps): React.Re
       >
         {file.photoId !== null && !failed ? (
           <img
-            src={thumbUrl(file.photoId, 320)}
-            className={loaded ? 'loaded' : undefined}
+            key={retry.attempt}
+            src={thumbUrl(file.photoId, 320, retry.attempt)}
+            className={retry.state === 'loaded' ? 'loaded' : undefined}
             alt=""
             loading="lazy"
             decoding="async"
             draggable={false}
-            onLoad={() => setLoaded(true)}
-            onError={() => setFailed(true)}
+            onLoad={retry.onLoad}
+            onError={retry.onError}
           />
+        ) : file.photoId !== null ? (
+          <span
+            className="file-icon has-repair"
+            title={retry.repairError ?? 'The preview could not be made'}
+          >
+            {file.video ? <IconPlay size={30} /> : <IconImage size={30} />}
+            <button
+              className="btn btn-ghost thumb-repair-inline"
+              disabled={retry.repairing}
+              onClick={(event) => {
+                event.stopPropagation();
+                retry.repair();
+              }}
+            >
+              <IconRefresh size={13} className={retry.repairing ? 'spin' : undefined} />
+              <span>
+                {retry.repairing
+                  ? 'Retrying…'
+                  : retry.repairError
+                    ? 'Failed, try again'
+                    : 'Retry preview'}
+              </span>
+            </button>
+          </span>
         ) : (
           <span
             className="file-icon"

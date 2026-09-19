@@ -161,7 +161,7 @@ export default function App(): React.ReactElement {
           </div>
         ) : (
           <Routes>
-            <Route path="/" element={<GalleryView settings={settings} />} />
+            <Route path="/" element={<GalleryView settings={settings} canRepair={isAdmin} />} />
             {/* Not merely hidden: the server refuses these to a viewer too. */}
             {isAdmin && <Route path="/files/*" element={<FilesView />} />}
             {isAdmin && (

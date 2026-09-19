@@ -2,7 +2,14 @@ import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { getDb, getSettings, KIND_VIDEO, saveSettings } from '../db.js';
 import { currentUser, requireAdmin } from '../guard.js';
-import { applyIndexMode, getIndexStatus, indexEvents, scan } from '../indexer.js';
+import {
+  applyIndexMode,
+  failedCount,
+  getIndexStatus,
+  indexEvents,
+  retryFailed,
+  scan,
+} from '../indexer.js';
 import { toRelPosix } from '../paths.js';
 import { galleryScope } from '../scope.js';
 import { clearThumbCache, thumbCacheStats } from '../thumbs.js';
@@ -81,6 +88,11 @@ export async function settingsRoutes(app: FastifyInstance): Promise<void> {
     return reply.send({ started: true });
   });
 
+  /** Gives every file marked unreadable another go, in the background. */
+  app.post('/api/index/retry-failed', { preHandler: requireAdmin }, async (_req, reply) =>
+    reply.send({ queued: retryFailed() }),
+  );
+
   /** Server-sent events carrying scan progress to the UI's progress pill. */
   app.get('/api/index/events', { preHandler: requireAdmin }, (req, reply) => {
     reply.raw.writeHead(200, {
@@ -130,6 +142,7 @@ export async function settingsRoutes(app: FastifyInstance): Promise<void> {
       totalBytes: row.bytes,
       thumbBytes: cache.bytes,
       thumbFiles: cache.files,
+      failed: failedCount(),
       oldest: row.oldest,
       newest: row.newest,
     };

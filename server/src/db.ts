@@ -48,6 +48,17 @@ export const META_FAILED = 2;
 /** Claimed by a worker batch. Reset to pending on startup after a crash. */
 export const META_INFLIGHT = 3;
 
+/**
+ * How often one file may be handed to the extractor before it is retired.
+ * A file that kills its worker process never reports a result, so without this
+ * the next scan would pick it up again and die in exactly the same place.
+ *
+ * It also separates the two kinds of {@link META_FAILED}: a row at the cap is
+ * retired for good, while one below it merely failed a read — which for a video
+ * is ffprobe having a bad moment, and is retried on later scans.
+ */
+export const MAX_META_ATTEMPTS = 3;
+
 let db: Database.Database | null = null;
 
 export function getDb(): Database.Database {
@@ -182,10 +193,17 @@ export function setMeta(key: string, value: string): void {
 
 /**
  * Records that this photo's bytes cannot be read. Called when a file kills the
- * worker that touched it, so nothing hands it to libvips a second time.
+ * worker that touched it, so nothing hands it to libvips a second time — the
+ * attempts go straight to the cap, which is what keeps later scans off it too.
  */
 export function markMetaFailed(id: number): void {
-  getDb().prepare(`UPDATE photos SET meta_state = ${META_FAILED} WHERE id = ?`).run(id);
+  getDb()
+    .prepare(
+      `UPDATE photos SET meta_state = ${META_FAILED},
+                         meta_attempts = MAX(meta_attempts, ${MAX_META_ATTEMPTS})
+       WHERE id = ?`,
+    )
+    .run(id);
 }
 
 /* -------------------------------------------------------------- settings -- */
