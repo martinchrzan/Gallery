@@ -5,6 +5,8 @@ import {
   formatDay,
   formatDimensions,
   formatDuration,
+  formatRelative,
+  formatShortDate,
 } from '../src/lib/format';
 
 describe('formatDuration', () => {
@@ -101,5 +103,25 @@ describe('formatDateTime', () => {
 
   it('renders a real timestamp', () => {
     expect(formatDateTime(new Date(2024, 4, 12, 15, 30).getTime())).toMatch(/2024/);
+  });
+});
+
+describe('formatRelative', () => {
+  const now = new Date(2026, 8, 18, 12, 0).getTime();
+  const minutesAgo = (n: number) => now - n * 60_000;
+
+  it('says "just now" inside the first minute', () => {
+    expect(formatRelative(minutesAgo(0.4), now)).toBe('just now');
+  });
+
+  it('counts minutes, then hours, then days', () => {
+    expect(formatRelative(minutesAgo(5), now)).toMatch(/5/);
+    expect(formatRelative(minutesAgo(3 * 60), now)).toMatch(/3/);
+    expect(formatRelative(minutesAgo(3 * 24 * 60), now)).toMatch(/3/);
+  });
+
+  it('gives a date, not a distance, past a week', () => {
+    const old = minutesAgo(20 * 24 * 60);
+    expect(formatRelative(old, now)).toBe(formatShortDate(old));
   });
 });

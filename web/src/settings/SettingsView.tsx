@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { api, type FolderNode, type Settings, type StatsResult } from '../api/client';
 import { formatBytes, formatCount, formatDateTime } from '../lib/format';
 import { useIndexStatus, useToast } from '../lib/hooks';
+import { ActivityPanel } from './ActivityPanel';
 import { toggleFolder as toggleFolderSelection } from './folders';
 import { FolderTree } from './FolderTree';
 import { UsersPanel } from './UsersPanel';
@@ -131,6 +132,8 @@ export function SettingsView({
           onError={reportError}
           onNotice={reportNotice}
         />
+
+        <ActivityPanel onError={reportError} />
 
         <section className="card">
           <h2>Indexing</h2>

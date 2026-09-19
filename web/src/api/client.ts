@@ -1,4 +1,5 @@
 import type {
+  ActivityReport,
   AuthState,
   BrowseResult,
   DirEntry,
@@ -16,6 +17,7 @@ import type {
 } from '@shared';
 
 export type {
+  ActivityReport,
   AuthState,
   BrowseResult,
   DirEntry,
@@ -250,6 +252,9 @@ export const api = {
     jsonRequest<Settings>('/api/settings', { method: 'PUT', body: JSON.stringify(patch) }),
 
   stats: (signal?: AbortSignal) => jsonRequest<StatsResult>('/api/stats', { signal }),
+
+  activity: (since: number, signal?: AbortSignal) =>
+    jsonRequest<ActivityReport>(`/api/activity?since=${since}`, { signal }),
 
   indexStatus: (signal?: AbortSignal) => jsonRequest<IndexStatus>('/api/index/status', { signal }),
 

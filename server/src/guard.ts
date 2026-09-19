@@ -8,6 +8,7 @@
  */
 
 import type { FastifyReply, FastifyRequest } from 'fastify';
+import { recordActivity } from './activity.js';
 import { userFromRequest } from './auth.js';
 import type { User } from './types.js';
 
@@ -50,6 +51,7 @@ export async function authGuard(req: FastifyRequest, reply: FastifyReply): Promi
   }
 
   req.authUser = user;
+  recordActivity(req, user);
   return;
 }
 

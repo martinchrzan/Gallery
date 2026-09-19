@@ -15,7 +15,7 @@
  * it cannot be used to burn CPU.
  */
 
-import { randomBytes, randomInt, scrypt as scryptCb, timingSafeEqual } from 'node:crypto';
+import { createHash, randomBytes, randomInt, scrypt as scryptCb, timingSafeEqual } from 'node:crypto';
 import { promisify } from 'node:util';
 import type { FastifyReply, FastifyRequest } from 'fastify';
 import { getDb } from './db.js';
@@ -303,6 +303,33 @@ export function clearSession(req: FastifyRequest, reply: FastifyReply): void {
 export function userFromRequest(req: FastifyRequest): User | null {
   const id = req.cookies[SESSION_COOKIE];
   return id ? resolveSession(id) : null;
+}
+
+/* --------------------------------------------------------------- devices -- */
+
+/**
+ * A stable, non-secret name for one signed-in browser.
+ *
+ * The session id is the credential itself, so it is never stored anywhere but
+ * `sessions` and never shown. Its hash identifies the same browser just as well
+ * without being usable to sign in as it — which is what lets the activity
+ * record, and the admin screen that reads it, name a device at all.
+ */
+export function deviceId(sessionId: string): string {
+  return createHash('sha256').update(sessionId).digest('base64url').slice(0, 16);
+}
+
+export function deviceFromRequest(req: FastifyRequest): string | null {
+  const id = req.cookies[SESSION_COOKIE];
+  return id ? deviceId(id) : null;
+}
+
+/** Devices that still hold a live session, as opposed to having signed out or expired. */
+export function signedInDevices(): Set<string> {
+  const rows = getDb().prepare('SELECT id FROM sessions WHERE expires_at >= ?').all(Date.now()) as {
+    id: string;
+  }[];
+  return new Set(rows.map((row) => deviceId(row.id)));
 }
 
 /* ------------------------------------------------------------- bootstrap -- */

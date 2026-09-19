@@ -29,6 +29,7 @@ describe('closed by default', () => {
       '/api/settings',
       '/api/users',
       '/api/stats',
+      '/api/activity',
     ];
 
     for (const url of routes) {

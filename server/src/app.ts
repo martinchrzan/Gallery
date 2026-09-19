@@ -21,6 +21,7 @@ import type { Config } from './config.js';
 import { repoRoot } from './config.js';
 import { authGuard } from './guard.js';
 import { PathError } from './paths.js';
+import { activityRoutes } from './routes/activity.js';
 import { authRoutes } from './routes/auth.js';
 import { filesRoutes } from './routes/files.js';
 import { galleryRoutes } from './routes/gallery.js';
@@ -142,6 +143,7 @@ export async function buildApp(
   await app.register(mediaRoutes);
   await app.register(filesRoutes);
   await app.register(settingsRoutes);
+  await app.register(activityRoutes);
 
   // Deliberately says nothing about the library: this is the one endpoint a
   // monitoring check may want without a session, so it must not leak a path.

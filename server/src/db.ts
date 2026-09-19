@@ -153,6 +153,21 @@ function migrate(instance: Database.Database): void {
     );
 
     CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_id);
+
+    -- One row per device, per address, per hour it was used. See activity.ts.
+    CREATE TABLE IF NOT EXISTS activity (
+      hour       INTEGER NOT NULL,
+      -- Hash of the session id: names the browser without being a credential.
+      device     TEXT    NOT NULL,
+      ip         TEXT    NOT NULL,
+      user_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      user_agent TEXT    NOT NULL,
+      first_at   INTEGER NOT NULL,
+      last_at    INTEGER NOT NULL,
+      PRIMARY KEY (hour, device, ip)
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_activity_user ON activity(user_id);
   `);
 
   addColumn(instance, 'photos', 'meta_attempts', 'INTEGER NOT NULL DEFAULT 0');
