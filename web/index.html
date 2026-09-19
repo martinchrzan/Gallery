@@ -3,10 +3,22 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-    <meta name="color-scheme" content="light" />
+    <!-- Both rewritten by /theme.js below, which must stay after them. -->
+    <meta name="color-scheme" content="light dark" />
     <meta name="theme-color" content="#ffffff" />
+    <script src="/theme.js"></script>
     <title>Photo Gallery</title>
     <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 72 72'><rect x='0' y='20' width='52' height='52' rx='16' fill='%237DA6F2'/><rect x='20' y='0' width='52' height='52' rx='16' fill='%232563EB'/><circle cx='46' cy='26' r='9' fill='%23F4F8FF'/></svg>" />
+
+    <!-- Installable: "Add to Home Screen" opens the gallery full-screen, with
+         its own icon, instead of as a browser tab. -->
+    <link rel="manifest" href="/manifest.webmanifest" />
+    <!-- iOS ignores the manifest's icons and wants its own. -->
+    <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png" />
+    <meta name="apple-mobile-web-app-title" content="Gallery" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="default" />
   </head>
   <body>
     <div id="root"></div>

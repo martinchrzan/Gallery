@@ -1,8 +1,15 @@
 /* ==========================================================================
-   Photo Gallery — light theme
-   A committed light design. The lightbox stays near-black on purpose: a bright
-   surround shifts your perception of a photo's colour and exposure, which is
-   why every serious photo viewer darkens the room rather than the picture.
+   Photo Gallery — light and dark themes
+   Light by default, dark on request or when the device asks for it. The
+   lightbox stays near-black in both on purpose: a bright surround shifts your
+   perception of a photo's colour and exposure, which is why every serious photo
+   viewer darkens the room rather than the picture. The dark theme extends that
+   to the grid for anyone who wants it.
+
+   `data-theme` on <html> is always the *resolved* theme — public/theme.js sets
+   it before the first paint and src/lib/theme.ts keeps it current — so the
+   dark palette is written once, below, rather than once more inside a
+   prefers-color-scheme query.
    ========================================================================== */
 
 :root {
@@ -20,12 +27,29 @@
   --text-faint: #9aa0aa;
 
   --accent: #2563eb;
+  /* The accent as a fill under white text. The same blue as `--accent` here;
+     the dark theme needs a lighter accent for text and a deeper one for fills,
+     and no single blue reads well as both on a dark page. */
+  --accent-fill: var(--accent);
   --accent-hover: #1d4fd8;
   --accent-soft: #eef4ff;
   --accent-border: #c7dbff;
 
   --danger: #d92d20;
   --danger-soft: #fef3f2;
+  --danger-border: #f5b8b3;
+
+  /* Frosted bars and chips that float over content: the page colour, mostly
+     opaque, with the backdrop blur doing the rest. */
+  --glass: rgba(255, 255, 255, 0.82);
+  --glass-strong: rgba(255, 255, 255, 0.9);
+  /* The page colour at zero alpha, for gradients that fade into it. */
+  --bg-clear: rgba(255, 255, 255, 0);
+  /* Hairline inside a tile, so a photo the colour of the page keeps an edge. */
+  --tile-edge: rgba(16, 24, 40, 0.12);
+
+  --scrollbar: #d5d9e0;
+  --scrollbar-hover: #b9bfc9;
 
   /* The activity heatmap: one hue, light to dark, for hours of use in a day.
      The lightest step still clears 2:1 against the card, so a single short
@@ -53,6 +77,58 @@
   --header-h: 60px;
 
   color-scheme: light;
+}
+
+/* A deep neutral rather than pure black, a touch lighter than the lightbox, so
+   opening a photo still reads as the room dimming. Surfaces step *up* in
+   lightness from the page and wells step down, the way they do in the light
+   theme. Keep `--bg` in step with the dark colour in public/theme.js. */
+:root[data-theme='dark'] {
+  --bg: #111316;
+  --bg-subtle: #0c0d10;
+  --surface: #181a1f;
+  --surface-hover: #22252b;
+  --surface-sunken: #0b0c0f;
+
+  --border: #272a31;
+  --border-strong: #363a42;
+
+  --text: #e9ebef;
+  --text-dim: #a3a9b3;
+  --text-faint: #6f7682;
+
+  /* 6:1 against the page as text; white on the fill below is 5.2:1. */
+  --accent: #5b8ff9;
+  --accent-fill: #2563eb;
+  --accent-hover: #3a74f0;
+  --accent-soft: #16233d;
+  --accent-border: #274677;
+
+  --danger: #f0706a;
+  --danger-soft: #2c1517;
+  --danger-border: #6b2a28;
+
+  --glass: rgba(17, 19, 22, 0.82);
+  --glass-strong: rgba(17, 19, 22, 0.9);
+  --bg-clear: rgba(17, 19, 22, 0);
+  --tile-edge: rgba(255, 255, 255, 0.07);
+
+  --scrollbar: #3a3e46;
+  --scrollbar-hover: #4c515b;
+
+  /* Reversed: on a dark card a busier day is a *brighter* cell. The dimmest
+     step still clears 2:1 against the card, as in the light theme. */
+  --heat-1: #2a5391;
+  --heat-2: #3a6fc4;
+  --heat-3: #5a92ea;
+  --heat-4: #a5c6ff;
+
+  --shadow-xs: 0 1px 2px rgba(0, 0, 0, 0.3);
+  --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.4), 0 1px 2px rgba(0, 0, 0, 0.3);
+  --shadow-md: 0 4px 10px -2px rgba(0, 0, 0, 0.45), 0 2px 4px -2px rgba(0, 0, 0, 0.3);
+  --shadow-lg: 0 16px 32px -8px rgba(0, 0, 0, 0.55), 0 4px 8px -4px rgba(0, 0, 0, 0.35);
+
+  color-scheme: dark;
 }
 
 * {
@@ -104,14 +180,14 @@ a {
 }
 
 ::-webkit-scrollbar-thumb {
-  background: #d5d9e0;
+  background: var(--scrollbar);
   border-radius: 8px;
   border: 3px solid transparent;
   background-clip: content-box;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: #b9bfc9;
+  background: var(--scrollbar-hover);
   background-clip: content-box;
 }
 
@@ -135,7 +211,7 @@ a {
   padding: 0 20px;
   flex: 0 0 auto;
   z-index: 20;
-  background: rgba(255, 255, 255, 0.82);
+  background: var(--glass);
   backdrop-filter: saturate(180%) blur(16px);
   -webkit-backdrop-filter: saturate(180%) blur(16px);
   border-bottom: 1px solid var(--border);
@@ -227,8 +303,8 @@ a {
 }
 
 .btn-primary {
-  background: var(--accent);
-  border-color: var(--accent);
+  background: var(--accent-fill);
+  border-color: var(--accent-fill);
   color: #fff;
   box-shadow: 0 1px 2px rgba(37, 99, 235, 0.25);
 }
@@ -263,7 +339,7 @@ a {
 
 .btn-danger:hover:not(:disabled) {
   background: var(--danger-soft);
-  border-color: #f5b8b3;
+  border-color: var(--danger-border);
 }
 
 .btn-icon {
@@ -406,7 +482,7 @@ input[type='checkbox'] {
   inset: 0;
   border-radius: inherit;
   background: rgba(20, 22, 26, 0);
-  box-shadow: inset 0 0 0 1px rgba(16, 24, 40, 0.12);
+  box-shadow: inset 0 0 0 1px var(--tile-edge);
   transition: background 0.14s ease, box-shadow 0.14s ease;
   pointer-events: none;
 }
@@ -559,7 +635,7 @@ input[type='checkbox'] {
   inset: 0;
   border-radius: inherit;
   background: rgba(20, 22, 26, 0);
-  box-shadow: inset 0 0 0 1px rgba(16, 24, 40, 0.12);
+  box-shadow: inset 0 0 0 1px var(--tile-edge);
   transition: background 0.14s ease, box-shadow 0.14s ease;
   pointer-events: none;
 }
@@ -674,7 +750,7 @@ input[type='checkbox'] {
   display: flex;
   align-items: center;
   padding: 12px 20px 8px;
-  background: linear-gradient(var(--bg) 78%, rgba(255, 255, 255, 0));
+  background: linear-gradient(var(--bg) 78%, var(--bg-clear));
   font-size: 13px;
   font-weight: 600;
   letter-spacing: -0.01em;
@@ -740,7 +816,7 @@ input[type='checkbox'] {
 
 .year-tick.current {
   color: #fff;
-  background: var(--accent);
+  background: var(--accent-fill);
   box-shadow: 0 1px 3px rgba(37, 99, 235, 0.35);
 }
 
@@ -750,8 +826,9 @@ input[type='checkbox'] {
   transform: translateY(-50%);
   padding: 6px 12px;
   border-radius: var(--radius-sm);
+  /* Inverted against the page in either theme. */
   background: var(--text);
-  color: #fff;
+  color: var(--bg);
   box-shadow: var(--shadow-md);
   font-size: 12px;
   font-weight: 600;
@@ -1228,7 +1305,7 @@ input[type='checkbox'] {
   flex-wrap: wrap;
   position: sticky;
   top: 0;
-  background: rgba(255, 255, 255, 0.88);
+  background: var(--glass-strong);
   backdrop-filter: saturate(180%) blur(14px);
   -webkit-backdrop-filter: saturate(180%) blur(14px);
   padding: 16px 0 14px;
@@ -1525,7 +1602,7 @@ svg.spin {
   top: 10px;
   left: 10px;
   z-index: 2;
-  background: rgba(255, 255, 255, 0.92);
+  background: var(--glass-strong);
   backdrop-filter: blur(6px);
   -webkit-backdrop-filter: blur(6px);
   border-radius: 7px;
@@ -1568,7 +1645,7 @@ svg.spin {
   /* Pointer events would take the drop away from the scroller underneath and
      leave the overlay stuck on screen. */
   pointer-events: none;
-  background: rgba(255, 255, 255, 0.82);
+  background: var(--glass);
   -webkit-backdrop-filter: blur(3px);
   backdrop-filter: blur(3px);
   color: var(--accent);
@@ -1834,8 +1911,9 @@ svg.spin {
   transform: translateX(-50%);
   padding: 11px 20px;
   border-radius: 999px;
+  /* Inverted against the page in either theme — and against the red too. */
   background: var(--text);
-  color: #fff;
+  color: var(--bg);
   box-shadow: var(--shadow-lg);
   font-size: 13.5px;
   font-weight: 500;
@@ -1955,7 +2033,7 @@ svg.spin {
   .year-tick {
     padding: 6px 10px;
     color: var(--text-dim);
-    background: rgba(255, 255, 255, 0.88);
+    background: var(--glass-strong);
     -webkit-backdrop-filter: blur(6px);
     backdrop-filter: blur(6px);
     box-shadow: var(--shadow-xs);
@@ -2008,6 +2086,12 @@ svg.spin {
      name. Double-tap toggles fit against zoom, so nothing is lost by dropping
      them; the badge still reports the current percentage. */
   .lightbox-bar .zoom-modes {
+    display: none;
+  }
+
+  /* An admin's bar carries the nav and three icon buttons, which leaves no room
+     for the name as well. It is the one item that is only informational. */
+  .topbar .who {
     display: none;
   }
 }

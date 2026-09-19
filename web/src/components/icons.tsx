@@ -102,6 +102,27 @@ export const IconSettings = (props: IconProps) => (
   </Svg>
 );
 
+export const IconSun = (props: IconProps) => (
+  <Svg {...props}>
+    <circle cx="12" cy="12" r="4" />
+    <path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41" />
+  </Svg>
+);
+
+export const IconMoon = (props: IconProps) => (
+  <Svg {...props}>
+    <path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z" />
+  </Svg>
+);
+
+/** Half light, half dark: the theme follows the device. */
+export const IconThemeAuto = (props: IconProps) => (
+  <Svg {...props}>
+    <circle cx="12" cy="12" r="9" />
+    <path d="M12 3a9 9 0 0 1 0 18Z" fill="currentColor" />
+  </Svg>
+);
+
 export const IconFolder = (props: IconProps) => (
   <Svg {...props}>
     <path d="M4 20a1 1 0 0 1-1-1V5a1 1 0 0 1 1-1h5l2 3h9a1 1 0 0 1 1 1v11a1 1 0 0 1-1 1Z" />

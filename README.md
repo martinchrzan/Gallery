@@ -83,6 +83,10 @@ survive a flaky connection.
 - **Resumable uploads**, chunked so no single request is large, with the chunk size following the
   connection.
 - **Settings stored server-side**, so they follow you between browsers.
+- **Light and dark themes**, following the device by default, with a toggle in the top bar
+  that each browser remembers — viewers included.
+- **Installable** — "Add to Home Screen" on a phone opens the gallery full-screen, with its own
+  icon, rather than as a browser tab.
 - **Dates in your own locale**, with no translation files involved.
 
 ---
