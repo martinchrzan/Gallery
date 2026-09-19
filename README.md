@@ -150,12 +150,16 @@ alphabet, about 78 bits.
 Issuing a new code for someone signs them out everywhere immediately, so a leaked code is a one-click
 fix.
 
+Settings also shows who has actually been using it: a day-by-day heatmap per person, and every
+device that has signed in — its browser, its address and when it was last active. The last 90 days
+are kept.
+
 ### Exposing it to the internet
 
 **Use HTTPS.** Everything above assumes the code is not readable in transit; over plain HTTP it is
 sent in the clear on every sign-in. A tunnel — Cloudflare Tunnel, Tailscale — gets you TLS without
-opening a port on your router. Set `trustProxy` to `true` when you do, so the rate limiter sees real
-client addresses and session cookies get marked `Secure`.
+opening a port on your router. Set `trustProxy` to `true` when you do, so the rate limiter and the
+activity record see real client addresses and session cookies get marked `Secure`.
 
 There is more on how access control actually works — and why it answers `404` rather than `403` — in
 [the architecture notes](docs/architecture.md#access-control).

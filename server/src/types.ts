@@ -194,6 +194,60 @@ export interface AuthState {
   user: User;
 }
 
+/**
+ * Who has used the gallery since a given moment, and from where. Raw hours
+ * rather than days: which day an hour belongs to depends on the reader's
+ * timezone, and the server does not know it.
+ */
+export interface ActivityReport {
+  /** Start of the window, epoch ms. Never earlier than the retention allows. */
+  since: number;
+  /** How far back anything is kept. */
+  retentionDays: number;
+  /** Everyone with an account, active in the window or not. */
+  people: ActivityPerson[];
+  /** Each hour a device was used in the window, once per address it used. */
+  hours: ActivityHour[];
+  /** Most recently active first. */
+  devices: ActivityDevice[];
+}
+
+export interface ActivityPerson {
+  id: number;
+  label: string;
+  role: Role;
+  lastSeenAt: number | null;
+}
+
+export interface ActivityHour {
+  /** Start of the hour, epoch ms. */
+  hour: number;
+  userId: number;
+  device: string;
+  ip: string;
+}
+
+/**
+ * One signed-in browser. Signing in again on the same phone starts a new
+ * session, and so counts as a new device from then on.
+ */
+export interface ActivityDevice {
+  id: string;
+  userId: number;
+  /** The most recent one seen. */
+  userAgent: string;
+  /** The most recent address, and how many distinct ones in the window. */
+  ip: string;
+  ipCount: number;
+  firstAt: number;
+  lastAt: number;
+  activeHours: number;
+  /** Still holds a live session, rather than having signed out or expired. */
+  signedIn: boolean;
+  /** The browser asking for this report. */
+  current: boolean;
+}
+
 export interface StatsResult {
   /** Everything in the index, videos included. */
   photos: number;

@@ -7,6 +7,7 @@ decisions that shaped them. For setup and features, see [the README](../README.m
 - [The feed](#the-feed)
 - [Thumbnails](#thumbnails)
 - [Access control](#access-control)
+- [Activity](#activity)
 - [Path safety](#path-safety)
 - [Writing to the library](#writing-to-the-library)
 - [Uploads](#uploads)
@@ -128,6 +129,32 @@ of folders, so an empty choice is an empty gallery rather than a silent "everyth
 reading would be the worst defaulting bug this code could have. Selecting the root entry is how you
 ask for the lot.
 
+## Activity
+
+Settings shows who has been using the gallery, on which devices, from where and when. It is
+recorded as one row per device, per address, per hour of use — which answers every question the
+screen asks without a write per request. Scrolling the feed fires dozens of thumbnail requests a
+second, and all but the first of them in any five minutes are absorbed by an in-memory note of when
+that device was last written.
+
+**A device is a session.** Each browser someone signs in on holds its own session, so that is what
+the screen calls a device; signing in again on the same phone starts a new one. The session id
+cannot name it, though, because the id *is* the credential — storing it anywhere else, or showing it
+to an admin, would hand out a way to sign in as that browser. The record keeps a hash of it instead,
+which identifies the same browser just as well and is useless as a cookie.
+
+**Hours, not days.** The server reports raw hours and the client folds them into days, because which
+day an hour belongs to depends on the reader's timezone. For the same reason the client asks for
+activity *since its own local midnight* rather than for a number of days.
+
+**What counts.** Any signed-in request, except the scan-progress stream: that reconnects by itself
+whenever it drops, and would otherwise show an admin's forgotten tab as hours of use. "Last seen" on
+the People list follows the same record, so it means last used rather than last signed in.
+
+Addresses are only as good as what reaches the server — behind a tunnel or reverse proxy, every
+visit arrives from the proxy unless `trustProxy` is on, and the screen says so when every address it
+has is the server's own. Rows older than 90 days are pruned; deleting a user deletes theirs.
+
 ## Path safety
 
 Every path the client can supply is rejected if it is absolute or contains a `..` segment, resolved
@@ -228,6 +255,7 @@ server/
   index.ts      Starts it: config, bootstrap, listen, shutdown
   auth.ts       Access codes, users, sessions
   guard.ts      Authentication hook and the admin check
+  activity.ts   Who used the gallery, on which device, from where, and when
   scope.ts      Folder scoping — who may see which photos
   paths.ts      Containment: every client-supplied path goes through here
   indexer.ts    The scanner, the watcher and the metadata queue
@@ -235,7 +263,7 @@ server/
   uploads.ts    Chunked upload sessions
   video.ts      ffmpeg/ffprobe
   workers/      Isolated image decoding
-  routes/       auth, gallery, media, files, settings
+  routes/       auth, gallery, media, files, settings, activity
 
 web/
   api/client.ts      The manifest decoder and every API call

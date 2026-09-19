@@ -21,6 +21,19 @@ const dateTimeFormatter = new Intl.DateTimeFormat(undefined, {
   timeStyle: 'short',
 });
 
+const shortDateFormatter = new Intl.DateTimeFormat(undefined, {
+  day: 'numeric',
+  month: 'short',
+});
+
+const shortDateWithYearFormatter = new Intl.DateTimeFormat(undefined, {
+  day: 'numeric',
+  month: 'short',
+  year: 'numeric',
+});
+
+const relativeFormatter = new Intl.RelativeTimeFormat(undefined, { numeric: 'auto' });
+
 const numberFormatter = new Intl.NumberFormat();
 
 /** Day headings omit the year for the current year, the way phones do. */
@@ -39,6 +52,31 @@ export function formatMonthDay(ms: number): string {
 
 export function formatDateTime(ms: number | null): string {
   return ms ? dateTimeFormatter.format(new Date(ms)) : '—';
+}
+
+/** `14 Sep`, with the year only when it is not this one. */
+export function formatShortDate(ms: number): string {
+  const date = new Date(ms);
+  return date.getFullYear() === new Date().getFullYear()
+    ? shortDateFormatter.format(date)
+    : shortDateWithYearFormatter.format(date);
+}
+
+/**
+ * `5 minutes ago`, `yesterday` — for the past week, where a distance reads
+ * faster than a date. Anything older is just the date.
+ */
+export function formatRelative(ms: number, now = Date.now()): string {
+  const minutes = Math.round((ms - now) / 60_000);
+  if (Math.abs(minutes) < 1) return 'just now';
+  if (Math.abs(minutes) < 60) return relativeFormatter.format(minutes, 'minute');
+
+  const hours = Math.round(minutes / 60);
+  if (Math.abs(hours) < 24) return relativeFormatter.format(hours, 'hour');
+
+  const days = Math.round(hours / 24);
+  if (Math.abs(days) < 7) return relativeFormatter.format(days, 'day');
+  return formatShortDate(ms);
 }
 
 export function formatCount(n: number): string {

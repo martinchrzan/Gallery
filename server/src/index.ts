@@ -1,4 +1,5 @@
 import path from 'node:path';
+import { pruneActivity } from './activity.js';
 import { buildApp } from './app.js';
 import { ensureAdminUser, pruneSessions } from './auth.js';
 import { config } from './config.js';
@@ -22,6 +23,7 @@ async function main(): Promise<void> {
 
   getDb();
   pruneSessions();
+  pruneActivity();
   // Clears `.part` files an upload interrupted by a previous shutdown left in
   // the library, before the scanner or the browser can trip over them.
   await initUploads((msg) => app.log.info(`[uploads] ${msg}`));
