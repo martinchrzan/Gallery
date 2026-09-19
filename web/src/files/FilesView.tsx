@@ -10,7 +10,6 @@ import {
   type Manifest,
 } from '../api/client';
 import {
-  IconArchive,
   IconCheck,
   IconClose,
   IconDownload,
@@ -309,11 +308,6 @@ export function FilesView(): React.ReactElement {
   const files = data?.files ?? [];
   const favorites = data?.favorites ?? [];
 
-  const zipFolder = (dir: DirEntry): void => {
-    downloadZip([dir.path]);
-    showToast(`Preparing a ZIP of ${dir.name}…`);
-  };
-
   return (
     <div
       className={`files${dragging ? ' dropping' : ''}`}
@@ -430,7 +424,6 @@ export function FilesView(): React.ReactElement {
                 dir={dir}
                 showPath
                 onOpen={() => openFolder(dir.path)}
-                onZip={() => zipFolder(dir)}
                 onToggleFavorite={() => toggleFavorite(dir)}
               />
             ))}
@@ -490,7 +483,6 @@ export function FilesView(): React.ReactElement {
                 key={dir.path}
                 dir={dir}
                 onOpen={() => openFolder(dir.path)}
-                onZip={() => zipFolder(dir)}
                 onToggleFavorite={() => toggleFavorite(dir)}
               />
             ))}
@@ -547,7 +539,6 @@ interface FolderCardProps {
   /** Shows where the folder lives, for the starred row at the top level. */
   showPath?: boolean;
   onOpen: () => void;
-  onZip: () => void;
   onToggleFavorite: () => void;
 }
 
@@ -555,7 +546,6 @@ function FolderCard({
   dir,
   showPath = false,
   onOpen,
-  onZip,
   onToggleFavorite,
 }: FolderCardProps): React.ReactElement {
   const parent = dir.path.includes('/') ? dir.path.slice(0, dir.path.lastIndexOf('/')) : '';
@@ -578,16 +568,6 @@ function FolderCard({
         }}
       >
         <IconStar size={15} filled={!!dir.favorite} />
-      </button>
-      <button
-        className="zip"
-        title="Download this folder as a ZIP"
-        onClick={(event) => {
-          event.stopPropagation();
-          onZip();
-        }}
-      >
-        <IconArchive size={15} />
       </button>
     </div>
   );

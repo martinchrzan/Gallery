@@ -1303,26 +1303,10 @@ input[type='checkbox'] {
   font-weight: 550;
 }
 
-.folder-card .zip {
-  opacity: 0;
-  color: var(--text-faint);
-  padding: 3px 7px;
-  border-radius: 6px;
-  transition: opacity 0.14s ease, background 0.14s ease, color 0.14s ease;
-}
-
-.folder-card:hover .zip {
-  opacity: 1;
-}
-
-.folder-card .zip:hover {
-  background: var(--surface-sunken);
-  color: var(--text);
-}
-
-/* Unstarred, the star is a hover affordance like the ZIP button. Starred, it
-   stays lit, because it is also the only thing saying why the folder is first. */
+/* Unstarred, the star is a hover affordance. Starred, it stays lit, because it
+   is also the only thing saying why the folder is first. */
 .folder-card .star {
+  margin-left: auto;
   opacity: 0;
   color: var(--text-faint);
   padding: 3px 5px;
