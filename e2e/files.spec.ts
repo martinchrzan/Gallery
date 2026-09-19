@@ -141,3 +141,28 @@ test('selects files for a ZIP download', async ({ page }) => {
   await page.locator('.file-check input').first().check();
   await expect(page.locator('.selection-bar')).toContainText(/1/);
 });
+
+test('a starred folder leads its siblings and is listed at the top level', async ({ page }, testInfo) => {
+  // Stars are library-wide settings, and every project shares one server: run
+  // this in one of them only, so two cannot toggle the same star at once.
+  test.skip(testInfo.project.name !== 'desktop', 'shared server-side state');
+
+  await page.goto('/files/Travel');
+  const norway = page.locator('.folder-card', { hasText: 'Norway' });
+  await expect(norway).toBeVisible();
+
+  await norway.hover();
+  await norway.getByRole('button', { name: 'Star folder' }).click();
+
+  await expect(page.locator('.folder-card').first()).toContainText('Norway');
+  await expect(page.locator('.folder-card').first()).toHaveClass(/starred/);
+
+  await page.goto('/files');
+  await expect(page.locator('.section-label', { hasText: 'Starred' })).toBeVisible();
+  const shortcut = page.locator('.folder-card.starred', { hasText: 'Norway' });
+  await expect(shortcut).toContainText('Travel');
+
+  // Unstarred from the shortcut row, which also puts things back as they were.
+  await shortcut.getByRole('button', { name: 'Unstar folder' }).click();
+  await expect(page.locator('.section-label', { hasText: 'Starred' })).toHaveCount(0);
+});

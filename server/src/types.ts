@@ -54,6 +54,12 @@ export interface Settings {
   showMemories: boolean;
   /** Generate all grid thumbnails in the background after a scan. */
   prewarmThumbs: boolean;
+  /**
+   * Starred folders, as relative POSIX paths. They sort ahead of their siblings
+   * in the Files view, and the top level lists all of them. Admin-only: a
+   * viewer always gets `[]`, since the paths would name folders they cannot see.
+   */
+  favoriteFolders: string[];
 }
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -64,6 +70,7 @@ export const DEFAULT_SETTINGS: Settings = {
   showMetadata: false,
   showMemories: true,
   prewarmThumbs: false,
+  favoriteFolders: [],
 };
 
 /**
@@ -98,6 +105,8 @@ export interface PhotoDetail {
 export interface DirEntry {
   name: string;
   path: string;
+  /** True when this folder is starred. */
+  favorite?: boolean;
 }
 
 export interface FileEntry {
@@ -118,8 +127,14 @@ export interface FileEntry {
 export interface BrowseResult {
   path: string;
   parent: string | null;
+  /** Starred folders first, then the rest by name. */
   dirs: DirEntry[];
   files: FileEntry[];
+  /**
+   * Every starred folder deeper than the top level, so each is one click away
+   * from the start. Only filled in for the top level; empty everywhere else.
+   */
+  favorites: DirEntry[];
 }
 
 /**
@@ -186,6 +201,8 @@ export interface StatsResult {
   totalBytes: number;
   thumbBytes: number;
   thumbFiles: number;
+  /** Files the index has marked unreadable, which therefore have no preview. */
+  failed: number;
   oldest: number | null;
   newest: number | null;
 }

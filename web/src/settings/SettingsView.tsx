@@ -354,6 +354,42 @@ export function SettingsView({
               </button>
             </div>
           </div>
+
+          <div className="field">
+            <div>
+              <label>Files without a preview</label>
+              <div className="desc">
+                {stats
+                  ? stats.failed === 0
+                    ? 'None — every file could be read.'
+                    : `${formatCount(stats.failed)} file${stats.failed === 1 ? '' : 's'} could not be read. A retry reads them again in the background; files that fail again keep their placeholder.`
+                  : '—'}
+              </div>
+            </div>
+            <div className="field-control">
+              <button
+                className="btn"
+                disabled={!stats || stats.failed === 0}
+                onClick={() => {
+                  void api
+                    .retryFailed()
+                    .then(({ queued }) => {
+                      showToast(
+                        queued > 0
+                          ? `Retrying ${formatCount(queued)} file${queued === 1 ? '' : 's'}`
+                          : 'Nothing to retry',
+                      );
+                      // The retry runs in the background; look again once it
+                      // has had a moment.
+                      window.setTimeout(loadStats, 8000);
+                    })
+                    .catch((err: Error) => showToast(err.message, true));
+                }}
+              >
+                Retry all
+              </button>
+            </div>
+          </div>
         </section>
 
         <section className="card">

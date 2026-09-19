@@ -409,6 +409,8 @@ input[type='checkbox'] {
 
 .thumb-broken {
   display: flex;
+  flex-direction: column;
+  gap: 6px;
   align-items: center;
   justify-content: center;
   width: 100%;
@@ -1318,6 +1320,53 @@ input[type='checkbox'] {
   color: var(--text);
 }
 
+/* Unstarred, the star is a hover affordance like the ZIP button. Starred, it
+   stays lit, because it is also the only thing saying why the folder is first. */
+.folder-card .star {
+  opacity: 0;
+  color: var(--text-faint);
+  padding: 3px 5px;
+  border-radius: 6px;
+  display: inline-flex;
+  transition: opacity 0.14s ease, background 0.14s ease, color 0.14s ease;
+}
+
+.folder-card:hover .star,
+.folder-card .star.on,
+.folder-card .star:focus-visible {
+  opacity: 1;
+}
+
+.folder-card .star:hover {
+  background: var(--surface-sunken);
+  color: var(--text);
+}
+
+.folder-card .star.on {
+  color: #e0a100;
+}
+
+.folder-card.starred {
+  border-color: rgba(224, 161, 0, 0.45);
+}
+
+/* Where a starred folder lives, under its name in the top-level starred row. */
+.folder-card .folder-path {
+  display: block;
+  font-size: 11.5px;
+  font-weight: 400;
+  color: var(--text-faint);
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* No hover on a touchscreen, so the star has to be there to be tapped. */
+@media (hover: none) {
+  .folder-card .star {
+    opacity: 1;
+  }
+}
+
 /* The card being named, in the grid where the folder itself will appear — so
    the new name is typed in the place the result will occupy. */
 .folder-draft {
@@ -1401,6 +1450,56 @@ input[type='checkbox'] {
 .file-icon {
   font-size: 30px;
   opacity: 0.4;
+}
+
+/* A preview that failed: the icon stays faint, the retry button must not. */
+.file-icon.has-repair {
+  opacity: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+}
+
+.file-icon.has-repair > svg {
+  opacity: 0.4;
+}
+
+.thumb-repair-inline {
+  font-size: 12px;
+  padding: 4px 9px;
+  gap: 5px;
+}
+
+/* The retry control on a broken gallery tile. Small, since a tile can be
+   narrow, and above the hover overlay so it can be clicked. */
+.thumb-repair {
+  position: relative;
+  z-index: 2;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 8px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text-dim);
+  font-size: 11.5px;
+  cursor: pointer;
+}
+
+.thumb-repair:hover:not(:disabled) {
+  color: var(--text);
+  border-color: var(--accent-border);
+}
+
+.thumb-repair:disabled {
+  cursor: default;
+  opacity: 0.7;
+}
+
+svg.spin {
+  animation: spin 0.9s linear infinite;
 }
 
 .file-info {

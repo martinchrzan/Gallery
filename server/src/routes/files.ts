@@ -5,7 +5,7 @@ import type { Readable } from 'node:stream';
 import archiver from 'archiver';
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
-import { getDb, KIND_VIDEO } from '../db.js';
+import { getDb, getSettings, KIND_VIDEO, saveSettings } from '../db.js';
 import { requireAdmin } from '../guard.js';
 import { indexNewFile } from '../indexer.js';
 import {
@@ -17,6 +17,7 @@ import {
   realpathWithin,
   resolveWithinRoot,
   safeSegment,
+  toRelPosix,
 } from '../paths.js';
 import type { BrowseResult, DirEntry, FileEntry, FolderNode, UploadSession } from '../types.js';
 import {
@@ -80,13 +81,15 @@ export async function filesRoutes(app: FastifyInstance): Promise<void> {
       indexed.set(row.name, row);
     }
 
+    const favorites = new Set(getSettings().favoriteFolders);
     const dirs: DirEntry[] = [];
     const files: FileEntry[] = [];
 
     for (const entry of entries) {
       if (entry.isDirectory()) {
         if (isIgnoredDir(entry.name)) continue;
-        dirs.push({ name: entry.name, path: rel ? `${rel}/${entry.name}` : entry.name });
+        const dirPath = rel ? `${rel}/${entry.name}` : entry.name;
+        dirs.push({ name: entry.name, path: dirPath, favorite: favorites.has(dirPath) });
         continue;
       }
       if (!entry.isFile() || entry.name.startsWith('.')) continue;
@@ -112,11 +115,48 @@ export async function filesRoutes(app: FastifyInstance): Promise<void> {
       });
     }
 
-    dirs.sort((a, b) => collator.compare(a.name, b.name));
+    dirs.sort(
+      (a, b) => Number(!!b.favorite) - Number(!!a.favorite) || collator.compare(a.name, b.name),
+    );
     files.sort((a, b) => collator.compare(a.name, b.name));
 
-    const result: BrowseResult = { path: rel, parent: parentOf(rel), dirs, files };
+    const result: BrowseResult = {
+      path: rel,
+      parent: parentOf(rel),
+      dirs,
+      files,
+      favorites: rel === '' ? await nestedFavorites(favorites) : [],
+    };
     return reply.header('Cache-Control', 'no-store').send(result);
+  });
+
+  /**
+   * Stars or unstars one folder. The list lives in settings, so it follows the
+   * admin between browsers like everything else there.
+   */
+  app.put<{ Body: unknown }>('/api/files/favorite', async (req, reply) => {
+    const parsed = FavoriteToggle.safeParse(req.body);
+    if (!parsed.success) return reply.code(400).send({ error: 'Invalid request' });
+
+    const { rel, abs } = resolveWithinRoot(parsed.data.path);
+    if (rel === '') return reply.code(400).send({ error: 'The top level cannot be starred' });
+
+    if (parsed.data.favorite) {
+      // Only something that exists and is a folder can be starred. Unstarring
+      // is always allowed, so a folder deleted since can still be let go of.
+      const real = await realpathWithin(abs);
+      if (!(await fsp.stat(real)).isDirectory()) {
+        return reply.code(400).send({ error: 'Not a folder' });
+      }
+    }
+
+    // Read and written in one synchronous step, so two quick toggles cannot
+    // each save a list that is missing the other's change.
+    const current = getSettings().favoriteFolders.filter((p) => p !== rel);
+    if (parsed.data.favorite) current.push(rel);
+    const saved = saveSettings({ favoriteFolders: current });
+
+    return reply.send({ favoriteFolders: saved.favoriteFolders });
   });
 
   /** Single-file download of anything inside the root. */
@@ -350,6 +390,37 @@ export async function filesRoutes(app: FastifyInstance): Promise<void> {
     await abortUpload(req.params.id);
     return reply.send({ aborted: true });
   });
+}
+
+const FavoriteToggle = z
+  .object({
+    path: z.string().min(1).max(4096),
+    favorite: z.boolean(),
+  })
+  .strict();
+
+/**
+ * Starred folders below the top level, for the shortcut row there. Top-level
+ * ones are left out: they already lead the folder list on that same screen.
+ * A starred folder that has since been deleted or moved is quietly skipped.
+ */
+async function nestedFavorites(favorites: Set<string>): Promise<DirEntry[]> {
+  const found: DirEntry[] = [];
+
+  for (const raw of favorites) {
+    const rel = toRelPosix(raw);
+    if (!rel.includes('/')) continue;
+    try {
+      const { abs } = resolveWithinRoot(rel);
+      const real = await realpathWithin(abs);
+      if (!(await fsp.stat(real)).isDirectory()) continue;
+    } catch {
+      continue;
+    }
+    found.push({ name: path.posix.basename(rel), path: rel, favorite: true });
+  }
+
+  return found.sort((a, b) => collator.compare(a.name, b.name) || collator.compare(a.path, b.path));
 }
 
 const NewFolder = z

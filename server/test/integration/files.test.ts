@@ -230,3 +230,80 @@ describe('the folder tree', () => {
     expect(body).not.toContain('.git');
   });
 });
+
+describe('starred folders', () => {
+  const star = (folder: string, favorite: boolean, cookie = admin.cookie) =>
+    app.inject({
+      method: 'PUT',
+      url: '/api/files/favorite',
+      headers: { cookie },
+      payload: { path: folder, favorite },
+    });
+
+  it('sort ahead of their siblings', async () => {
+    const before = (await browse('')).dirs.map((d) => d.name);
+    const last = before[before.length - 1]!;
+
+    expect((await star(last, true)).statusCode).toBe(200);
+
+    const after = (await browse('')).dirs as { name: string; favorite?: boolean }[];
+    expect(after[0]?.name).toBe(last);
+    expect(after[0]?.favorite).toBe(true);
+
+    await star(last, false);
+    expect((await browse('')).dirs.map((d) => d.name)).toEqual(before);
+  });
+
+  it('show up at the top level when they are nested deeper', async () => {
+    await star('Travel/Norway', true);
+
+    const top = (await get('/api/files/browse?path=')).json() as {
+      favorites: { name: string; path: string }[];
+    };
+    expect(top.favorites.map((f) => f.path)).toContain('Travel/Norway');
+
+    // Only the top level carries the shortcut row.
+    const inside = (await get('/api/files/browse?path=Travel')).json() as {
+      favorites: unknown[];
+      dirs: { name: string; favorite?: boolean }[];
+    };
+    expect(inside.favorites).toEqual([]);
+    expect(inside.dirs[0]).toMatchObject({ name: 'Norway', favorite: true });
+
+    await star('Travel/Norway', false);
+  });
+
+  it('drop out of the shortcut row once the folder is gone', async () => {
+    await fs.mkdir(path.join(TEST_PHOTOS_ROOT, 'Travel', 'Doomed'), { recursive: true });
+    await star('Travel/Doomed', true);
+    await fs.rm(path.join(TEST_PHOTOS_ROOT, 'Travel', 'Doomed'), { recursive: true });
+
+    const top = (await get('/api/files/browse?path=')).json() as { favorites: { path: string }[] };
+    expect(top.favorites.map((f) => f.path)).not.toContain('Travel/Doomed');
+
+    // Unstarring a folder that no longer exists still works.
+    expect((await star('Travel/Doomed', false)).statusCode).toBe(200);
+  });
+
+  it('refuse a file, the top level, and anything outside the library', async () => {
+    expect((await star('Travel/packing-list.txt', true)).statusCode).toBe(400);
+    expect((await star('', true)).statusCode).toBe(400);
+    expect([403, 404]).toContain((await star('../..', true)).statusCode);
+  });
+
+  it('are an admin tool, and never reach a viewer', async () => {
+    await star('Travel', true);
+    const viewer = await signIn(app, { label: 'Guest', role: 'viewer', folders: ['Travel'] });
+
+    expect((await star('Travel', false, viewer.cookie)).statusCode).toBe(403);
+
+    const settings = await app.inject({
+      method: 'GET',
+      url: '/api/settings',
+      headers: { cookie: viewer.cookie },
+    });
+    expect((settings.json() as { favoriteFolders: string[] }).favoriteFolders).toEqual([]);
+
+    await star('Travel', false);
+  });
+});

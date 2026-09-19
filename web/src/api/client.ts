@@ -229,6 +229,21 @@ export const api = {
   createFolder: (input: { path: string; name: string }) =>
     jsonRequest<DirEntry>('/api/files/folder', { method: 'POST', body: JSON.stringify(input) }),
 
+  setFavorite: (path: string, favorite: boolean) =>
+    jsonRequest<{ favoriteFolders: string[] }>('/api/files/favorite', {
+      method: 'PUT',
+      body: JSON.stringify({ path, favorite }),
+    }),
+
+  /** Re-reads one file and renders its preview again; says whether that worked. */
+  repairMedia: (id: number) =>
+    jsonRequest<{ ok: boolean; error: string | null }>(`/api/media/${id}/repair`, {
+      method: 'POST',
+    }),
+
+  retryFailed: () =>
+    jsonRequest<{ queued: number }>('/api/index/retry-failed', { method: 'POST' }),
+
   settings: (signal?: AbortSignal) => jsonRequest<Settings>('/api/settings', { signal }),
 
   saveSettings: (patch: Partial<Settings>) =>
@@ -314,8 +329,13 @@ function versioned(url: string): string {
   return `${url}${url.includes('?') ? '&' : '?'}v=${encodeURIComponent(mediaVersion)}`;
 }
 
-export function thumbUrl(id: number, size: 320 | 640 | 1600): string {
-  return versioned(`/api/media/${id}/thumb?h=${size}`);
+/**
+ * `attempt` moves the URL for a retry, so the browser asks the server again
+ * instead of answering from whatever it remembers about the failed request.
+ */
+export function thumbUrl(id: number, size: 320 | 640 | 1600, attempt = 0): string {
+  const url = versioned(`/api/media/${id}/thumb?h=${size}`);
+  return attempt > 0 ? `${url}&r=${attempt}` : url;
 }
 
 export function originalUrl(id: number): string {
