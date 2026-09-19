@@ -18,7 +18,8 @@
     "test:e2e": "playwright test --project=setup --project=desktop --project=mobile",
     "test:e2e:ui": "playwright test --ui",
     "screenshots": "playwright test --project=screenshots",
-    "demo": "node tools/make-demo.mjs"
+    "demo": "node tools/make-demo.mjs",
+    "icons": "node tools/make-icons.mjs"
   },
   "devDependencies": {
     "@playwright/test": "^1.62.1",

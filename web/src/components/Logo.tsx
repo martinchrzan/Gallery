@@ -6,6 +6,9 @@
  *
  * The colours are fixed, not `currentColor`: this is the logo, and it should
  * read the same everywhere it appears.
+ *
+ * The favicon in index.html and the home-screen icons (`npm run icons`, see
+ * tools/make-icons.mjs) each carry a copy of these shapes.
  */
 
 interface LogoProps {

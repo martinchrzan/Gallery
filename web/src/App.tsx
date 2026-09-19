@@ -13,10 +13,16 @@ import { GalleryView } from './gallery/GalleryView';
 import { SettingsView } from './settings/SettingsView';
 import { IconSettings, IconSignOut } from './components/icons';
 import { Logo } from './components/Logo';
+import { ThemeToggle } from './components/ThemeToggle';
 import { useIndexStatus } from './lib/hooks';
 import { formatCount } from './lib/format';
+import { useTheme } from './lib/theme';
 
 export default function App(): React.ReactElement {
+  // Up here, above every early return, so the sign-in screen follows the
+  // device's light or dark switch too — not just the signed-in app.
+  const themeState = useTheme();
+
   // `undefined` while the session is still being probed, `null` once we know
   // nobody is signed in — the two must not be conflated, or the login screen
   // flashes on every reload before the cookie has been checked.
@@ -131,6 +137,8 @@ export default function App(): React.ReactElement {
         <span className="who" title={isAdmin ? 'Administrator' : 'Gallery access'}>
           {user.label}
         </span>
+
+        <ThemeToggle {...themeState} />
 
         {isAdmin && (
           <NavLink
